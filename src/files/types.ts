@@ -15,6 +15,7 @@ export interface PublicFileRecord {
 
 export interface StoredFileRecord extends PublicFileRecord {
   ownerId: string;
+  retainedBytes: number;
   directory: string;
   artifactPath: string;
   schemaPath: string;

@@ -3,6 +3,7 @@ import {
   EmptyUploadError,
   InvalidFilenameError,
   SchemagrepProcessError,
+  TenantStorageQuotaError,
   UnsupportedFileTypeError,
   UploadTooLargeError,
 } from "./errors";
@@ -45,6 +46,15 @@ function sendKnownError(error: unknown, reply: FastifyReply): boolean {
   if (error instanceof InvalidFilenameError) {
     void reply.code(400).send({
       error: { code: "invalid_filename", message: "Uploaded filename is invalid" },
+    });
+    return true;
+  }
+  if (error instanceof TenantStorageQuotaError) {
+    void reply.code(413).send({
+      error: {
+        code: "storage_quota_exceeded",
+        message: "Tenant retained-storage quota exceeded",
+      },
     });
     return true;
   }

@@ -9,6 +9,7 @@ import { SchemagrepRunner, type SchemagrepProcessor } from "../schemagrep/runner
 import {
   EmptyUploadError,
   InvalidFilenameError,
+  TenantStorageQuotaError,
   UnsupportedFileTypeError,
   UploadTooLargeError,
 } from "./errors";
@@ -71,12 +72,14 @@ export interface EphemeralFileServiceOptions {
   storageBaseDirectory: string;
   fileTtlMs: number;
   maxUploadBytes: number;
+  maxTenantStorageBytes: number;
   runner: SchemagrepProcessor;
   now?: () => number;
 }
 
 export class EphemeralFileService implements FileService {
   private readonly files = new Map<string, StoredFileRecord>();
+  private readonly tenantStorageBytes = new Map<string, number>();
   private readonly instanceDirectory: string;
   private readonly now: () => number;
   private readonly sweepTimer: NodeJS.Timeout;
@@ -116,13 +119,19 @@ export class EphemeralFileService implements FileService {
       if (source.wasTruncated()) throw new UploadTooLargeError();
       if (limiter.bytesWritten === 0) throw new EmptyUploadError();
 
-      await this.options.runner.encode(sourcePath, artifactPath);
+      const artifactBytes = await this.options.runner.encode(sourcePath, artifactPath);
       const schemaBytes = await this.options.runner.schema(sourcePath, schemaPath);
       await rm(sourcePath, { force: true });
+      const retainedBytes = artifactBytes + schemaBytes;
+      const tenantUsage = this.tenantStorageBytes.get(ownerId) ?? 0;
+      if (tenantUsage + retainedBytes > this.options.maxTenantStorageBytes) {
+        throw new TenantStorageQuotaError();
+      }
 
       const createdAtMs = this.now();
       const record: StoredFileRecord = {
         ownerId,
+        retainedBytes,
         id,
         status: "ready",
         codec,
@@ -135,6 +144,7 @@ export class EphemeralFileService implements FileService {
         artifactPath,
         schemaPath,
       };
+      this.tenantStorageBytes.set(ownerId, tenantUsage + retainedBytes);
       this.files.set(id, record);
       return this.toPublicRecord(record);
     } catch (error) {
@@ -167,6 +177,7 @@ export class EphemeralFileService implements FileService {
   }
 
   async close(): Promise<void> {
+    this.tenantStorageBytes.clear();
     clearInterval(this.sweepTimer);
     this.files.clear();
     if (this.initialization !== undefined) {
@@ -209,6 +220,10 @@ export class EphemeralFileService implements FileService {
 
   private async remove(record: StoredFileRecord): Promise<void> {
     this.files.delete(record.id);
+    const tenantUsage = this.tenantStorageBytes.get(record.ownerId) ?? 0;
+    const remainingUsage = tenantUsage - record.retainedBytes;
+    if (remainingUsage > 0) this.tenantStorageBytes.set(record.ownerId, remainingUsage);
+    else this.tenantStorageBytes.delete(record.ownerId);
     await rm(record.directory, { recursive: true, force: true });
   }
 
@@ -232,12 +247,17 @@ export function createFileService(config: ServiceConfig): EphemeralFileService {
     timeoutMs: config.processTimeoutMs,
     maxArtifactBytes: config.maxArtifactBytes,
     maxSchemaBytes: config.maxSchemaBytes,
+    sandbox:
+      config.workerSandbox === "bwrap"
+        ? { mode: "bwrap", bubblewrapBinary: config.bubblewrapBinary }
+        : { mode: "disabled" },
   });
 
   return new EphemeralFileService({
     storageBaseDirectory: config.storageBaseDirectory,
     fileTtlMs: config.fileTtlMs,
     maxUploadBytes: config.maxUploadBytes,
+    maxTenantStorageBytes: config.maxTenantStorageBytes,
     runner,
   });
 }

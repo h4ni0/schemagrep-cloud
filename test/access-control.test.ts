@@ -25,6 +25,9 @@ const CONFIG: ServiceConfig = {
   ],
   rateLimitMax: 100,
   rateLimitWindowMs: 60_000,
+  maxTenantStorageBytes: 4096,
+  workerSandbox: "disabled",
+  bubblewrapBinary: "/usr/bin/bwrap",
 };
 
 interface OwnedRecord {

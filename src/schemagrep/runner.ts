@@ -2,7 +2,9 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { Transform, type TransformCallback } from "node:stream";
+import { extname } from "node:path";
 import { SchemagrepProcessError } from "../files/errors";
+import { bubblewrapIsolationArgs } from "./sandbox";
 
 const MAX_STDERR_BYTES = 64 * 1024;
 
@@ -35,26 +37,87 @@ export interface SchemagrepProcessor {
   schema(sourcePath: string, outputPath: string): Promise<number>;
 }
 
+export type WorkerSandbox =
+  | { mode: "disabled" }
+  | { mode: "bwrap"; bubblewrapBinary: string };
+
+interface ProcessInvocation {
+  executable: string;
+  args: string[];
+}
+
 export interface SchemagrepRunnerOptions {
   binaryPath: string;
   timeoutMs: number;
   maxArtifactBytes: number;
   maxSchemaBytes: number;
+  sandbox: WorkerSandbox;
 }
 
 export class SchemagrepRunner implements SchemagrepProcessor {
   constructor(private readonly options: SchemagrepRunnerOptions) {}
 
   encode(sourcePath: string, outputPath: string): Promise<number> {
-    return this.runToFile(["encode", sourcePath], outputPath, this.options.maxArtifactBytes);
+    return this.runToFile("encode", sourcePath, outputPath, this.options.maxArtifactBytes);
   }
 
   schema(sourcePath: string, outputPath: string): Promise<number> {
-    return this.runToFile(["schema", sourcePath], outputPath, this.options.maxSchemaBytes);
+    return this.runToFile("schema", sourcePath, outputPath, this.options.maxSchemaBytes);
   }
 
-  private async runToFile(args: readonly string[], outputPath: string, maxBytes: number): Promise<number> {
-    const child = spawn(this.options.binaryPath, args, {
+  private buildInvocation(action: "encode" | "schema", sourcePath: string): ProcessInvocation {
+    if (this.options.sandbox.mode === "disabled") {
+      return { executable: this.options.binaryPath, args: [action, sourcePath] };
+    }
+
+    const sandboxSource = `/input/source${extname(sourcePath)}`;
+    const args = [
+      ...bubblewrapIsolationArgs(),
+      "--dir",
+      "/engine",
+      "--dir",
+      "/input",
+    ];
+    args.push(
+      "--ro-bind",
+      this.options.binaryPath,
+      "/engine/schemagrep",
+      "--ro-bind",
+      sourcePath,
+      sandboxSource,
+      "--tmpfs",
+      "/tmp",
+      "--dir",
+      "/proc",
+      "--dir",
+      "/dev",
+      "--chdir",
+      "/tmp",
+      "--setenv",
+      "LANG",
+      "C",
+      "--setenv",
+      "LC_ALL",
+      "C",
+      "--cap-drop",
+      "ALL",
+      "--",
+      "/engine/schemagrep",
+      action,
+      sandboxSource,
+    );
+    return { executable: this.options.sandbox.bubblewrapBinary, args };
+  }
+
+  private async runToFile(
+    action: "encode" | "schema",
+    sourcePath: string,
+    outputPath: string,
+    maxBytes: number,
+  ): Promise<number> {
+
+    const invocation = this.buildInvocation(action, sourcePath);
+    const child = spawn(invocation.executable, invocation.args, {
       cwd: undefined,
       env: {
         LANG: "C",

@@ -1,9 +1,10 @@
 import { buildApp } from "./app";
 import { loadConfig } from "./config";
-import { assertSchemagrepBinary } from "./schemagrep/probe";
+import { assertSchemagrepBinary, assertWorkerSandbox } from "./schemagrep/probe";
 
 const config = loadConfig();
 await assertSchemagrepBinary(config.schemagrepBinary);
+await assertWorkerSandbox(config.workerSandbox, config.bubblewrapBinary);
 const app = buildApp({ config, logger: true });
 
 let shuttingDown = false;

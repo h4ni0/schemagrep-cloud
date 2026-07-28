@@ -12,6 +12,13 @@ export class InvalidFilenameError extends Error {
   }
 }
 
+export class TenantStorageQuotaError extends Error {
+  constructor() {
+    super("Tenant retained-storage quota exceeded");
+    this.name = "TenantStorageQuotaError";
+  }
+}
+
 export class UnsupportedFileTypeError extends Error {
   constructor(filename: string) {
     super(`Unsupported file type for ${filename}`);

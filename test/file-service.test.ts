@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import {
   EmptyUploadError,
   InvalidFilenameError,
+  TenantStorageQuotaError,
   UnsupportedFileTypeError,
 } from "../src/files/errors";
 import { EphemeralFileService } from "../src/files/service";
@@ -52,6 +53,7 @@ describe("EphemeralFileService", () => {
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
+      maxTenantStorageBytes: 4096,
       runner: new FakeProcessor(),
       now: () => now,
     });
@@ -97,6 +99,7 @@ describe("EphemeralFileService", () => {
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
+      maxTenantStorageBytes: 4096,
       runner: new FakeProcessor(),
     });
 
@@ -125,6 +128,7 @@ describe("EphemeralFileService", () => {
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
+      maxTenantStorageBytes: 4096,
       runner,
     });
 
@@ -144,6 +148,37 @@ describe("EphemeralFileService", () => {
     await service.close();
   });
 
+  test("tracks retained-byte quotas independently per tenant and releases usage on delete", async () => {
+    const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
+    temporaryDirectories.push(storageBaseDirectory);
+    const service = new EphemeralFileService({
+      storageBaseDirectory,
+      fileTtlMs: 1000,
+      maxUploadBytes: 1024,
+      maxTenantStorageBytes: 30,
+      runner: new FakeProcessor(),
+    });
+    const ingest = (ownerId: string) =>
+      service.ingest(
+        {
+          filename: "events.jsonl",
+          stream: Readable.from(['{"id":1}\n']),
+          wasTruncated: () => false,
+        },
+        ownerId,
+      );
+
+    const firstAlpha = await ingest("alpha");
+    await expect(ingest("alpha")).rejects.toBeInstanceOf(TenantStorageQuotaError);
+    const firstBeta = await ingest("beta");
+    expect(await service.delete(firstAlpha.id, "alpha")).toBe(true);
+    const secondAlpha = await ingest("alpha");
+
+    expect(await service.get(firstBeta.id, "beta")).toBeDefined();
+    expect(await service.get(secondAlpha.id, "alpha")).toBeDefined();
+    await service.close();
+  });
+
   test("rejects unsupported extensions before creating storage", async () => {
     const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
     temporaryDirectories.push(storageBaseDirectory);
@@ -151,6 +186,7 @@ describe("EphemeralFileService", () => {
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
+      maxTenantStorageBytes: 4096,
       runner: new FakeProcessor(),
     });
 

@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app";
 import type { ServiceConfig } from "../src/config";
-import { EmptyUploadError, UploadTooLargeError } from "../src/files/errors";
+import {
+  EmptyUploadError,
+  TenantStorageQuotaError,
+  UploadTooLargeError,
+} from "../src/files/errors";
 import type { FileService, PublicFileRecord, UploadSource } from "../src/files/types";
 
 const RECORD: PublicFileRecord = {
@@ -30,6 +34,9 @@ const CONFIG: ServiceConfig = {
   apiCredentials: [],
   rateLimitMax: 100,
   rateLimitWindowMs: 60_000,
+  maxTenantStorageBytes: 4096,
+  workerSandbox: "disabled",
+  bubblewrapBinary: "/usr/bin/bwrap",
 };
 
 class FakeFileService implements FileService {
@@ -38,6 +45,7 @@ class FakeFileService implements FileService {
   closed = false;
   getCalls = 0;
   lastOwnerId: string | undefined;
+  ingestError: Error | undefined;
 
   async ingest(source: UploadSource, ownerId: string): Promise<PublicFileRecord> {
     this.lastOwnerId = ownerId;
@@ -46,6 +54,7 @@ class FakeFileService implements FileService {
     if (source.wasTruncated()) throw new UploadTooLargeError();
     this.uploaded = Buffer.concat(chunks);
     if (this.uploaded.byteLength === 0) throw new EmptyUploadError();
+    if (this.ingestError !== undefined) throw this.ingestError;
     return { ...RECORD, originalName: source.filename, sourceBytes: this.uploaded.byteLength };
   }
 
@@ -147,6 +156,28 @@ describe("ephemeral file routes", () => {
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body)).toEqual({
       error: { code: "empty_file", message: "Uploaded file must not be empty" },
+    });
+  });
+
+  test("reports a retained-storage quota rejection", async () => {
+    const fileService = new FakeFileService();
+    fileService.ingestError = new TenantStorageQuotaError();
+    app = buildApp({ config: CONFIG, fileService });
+    const upload = multipartPayload("events.jsonl", '{"id":1}\n');
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/files",
+      headers: { "content-type": `multipart/form-data; boundary=${upload.boundary}` },
+      payload: upload.payload,
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(JSON.parse(response.body)).toEqual({
+      error: {
+        code: "storage_quota_exceeded",
+        message: "Tenant retained-storage quota exceeded",
+      },
     });
   });
 

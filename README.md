@@ -10,6 +10,7 @@ Natural-language model calls and structured query routes are not implemented yet
 - C compiler and `make`
 - `pkg-config`
 - PCRE2 development headers (`pcre2` on Arch, `libpcre2-dev` on Debian/Ubuntu)
+- Bubblewrap (`bubblewrap` package) for the default network/filesystem worker sandbox
 
 ## Clone and run
 
@@ -98,6 +99,9 @@ The upload field must be named `file`. Supported filename extensions are `.csv`,
 | `AUTH_DISABLED` | `false`; set `true` only for isolated local development |
 | `RATE_LIMIT_MAX` | `60` requests per tenant or unauthenticated IP |
 | `RATE_LIMIT_WINDOW_MS` | `60000` |
+| `MAX_TENANT_STORAGE_BYTES` | `536870912` retained artifact + schema bytes |
+| `WORKER_SANDBOX` | `bwrap`; set `disabled` only for isolated local development |
+| `BWRAP_BIN` | `/usr/bin/bwrap` |
 
 The byte fields returned in metadata are diagnostic measurements, not compression guarantees.
 
@@ -108,15 +112,17 @@ The current API:
 - authenticates every `/v1` request with a hashed bearer-key comparison;
 - scopes file reads and deletion to the tenant that uploaded the file;
 - applies bounded in-memory rate limits per tenant and per unauthenticated IP;
+- caps each tenant's retained artifact and schema bytes, releasing quota on deletion or expiry;
 - streams uploads through a fixed byte limit;
 - rejects empty files, unsupported extensions, unsafe filenames, and malformed public IDs;
 - strips multipart path components before filenames reach storage validation;
 - generates storage paths from random server-side IDs, never client filenames or URL parameters;
 - invokes schemagrep with fixed arguments and `shell: false`;
+- runs schemagrep under Bubblewrap with a private network namespace, cleared environment, read-only engine/input/system mounts, no capabilities, and a temporary writable `/tmp`;
 - bounds process time, generated artifact size, schema size, and captured stderr;
 - deletes the raw upload after processing and deletes retained artifacts on request or TTL expiry.
 
-The limiter is per service process; a multi-replica deployment will need a shared limiter. This is not yet a complete public-internet boundary: per-tenant storage quotas and OS/container isolation for the worker still need to be implemented before accepting arbitrary uploads at scale.
+Rate limits and storage quotas are per service process; a multi-replica deployment will need shared accounting. Bubblewrap isolates network and filesystem access, but production deployment should still add container/cgroup CPU and memory ceilings around the service.
 
 ## Checks
 

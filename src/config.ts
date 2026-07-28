@@ -11,6 +11,8 @@ export interface ApiCredentialConfig {
   secret: string;
 }
 
+export type WorkerSandboxMode = "bwrap" | "disabled";
+
 export interface ServiceConfig {
   host: string;
   port: number;
@@ -25,6 +27,9 @@ export interface ServiceConfig {
   apiCredentials: readonly ApiCredentialConfig[];
   rateLimitMax: number;
   rateLimitWindowMs: number;
+  maxTenantStorageBytes: number;
+  workerSandbox: WorkerSandboxMode;
+  bubblewrapBinary: string;
 }
 
 function parseInteger(
@@ -49,6 +54,12 @@ function parseBoolean(name: string, value: string | undefined, fallback: boolean
   if (value === "true") return true;
   if (value === "false") return false;
   throw new Error(`${name} must be true or false; received ${value}`);
+}
+
+function parseSandboxMode(value: string | undefined): WorkerSandboxMode {
+  if (value === undefined || value === "bwrap") return "bwrap";
+  if (value === "disabled") return "disabled";
+  throw new Error(`WORKER_SANDBOX must be bwrap or disabled; received ${value}`);
 }
 
 function parseApiCredentials(value: string | undefined, authDisabled: boolean): ApiCredentialConfig[] {
@@ -150,5 +161,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
       1000,
       3_600_000,
     ),
+    maxTenantStorageBytes: parseInteger(
+      "MAX_TENANT_STORAGE_BYTES",
+      env.MAX_TENANT_STORAGE_BYTES,
+      512 * MEBIBYTE,
+      1,
+      100 * 1024 * MEBIBYTE,
+    ),
+    workerSandbox: parseSandboxMode(env.WORKER_SANDBOX),
+    bubblewrapBinary: env.BWRAP_BIN ?? "/usr/bin/bwrap",
   };
 }
