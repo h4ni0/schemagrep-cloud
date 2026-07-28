@@ -105,11 +105,14 @@ export async function registerFileRoutes(
         });
       }
 
-      const record = await options.fileService.ingest({
-        filename: upload.filename,
-        stream: upload.file,
-        wasTruncated: () => upload.file.truncated,
-      });
+      const record = await options.fileService.ingest(
+        {
+          filename: upload.filename,
+          stream: upload.file,
+          wasTruncated: () => upload.file.truncated,
+        },
+        request.tenantId,
+      );
       return reply.code(201).send(record);
     } catch (error) {
       if (sendKnownError(error, reply)) return reply;
@@ -119,21 +122,21 @@ export async function registerFileRoutes(
 
   app.get<{ Params: FileParams }>("/v1/files/:id", async (request, reply) => {
     if (!FILE_ID_PATTERN.test(request.params.id)) return sendFileNotFound(reply);
-    const record = await options.fileService.get(request.params.id);
+    const record = await options.fileService.get(request.params.id, request.tenantId);
     if (record === undefined) return sendFileNotFound(reply);
     return record;
   });
 
   app.get<{ Params: FileParams }>("/v1/files/:id/schema", async (request, reply) => {
     if (!FILE_ID_PATTERN.test(request.params.id)) return sendFileNotFound(reply);
-    const schema = await options.fileService.readSchema(request.params.id);
+    const schema = await options.fileService.readSchema(request.params.id, request.tenantId);
     if (schema === undefined) return sendFileNotFound(reply);
     return reply.type("text/plain; charset=utf-8").send(schema);
   });
 
   app.delete<{ Params: FileParams }>("/v1/files/:id", async (request, reply) => {
     if (!FILE_ID_PATTERN.test(request.params.id)) return sendFileNotFound(reply);
-    const deleted = await options.fileService.delete(request.params.id);
+    const deleted = await options.fileService.delete(request.params.id, request.tenantId);
     if (!deleted) return sendFileNotFound(reply);
     return reply.code(204).send();
   });

@@ -26,6 +26,10 @@ const CONFIG: ServiceConfig = {
   maxUploadBytes: 1024,
   maxArtifactBytes: 4096,
   maxSchemaBytes: 4096,
+  authDisabled: true,
+  apiCredentials: [],
+  rateLimitMax: 100,
+  rateLimitWindowMs: 60_000,
 };
 
 class FakeFileService implements FileService {
@@ -33,8 +37,10 @@ class FakeFileService implements FileService {
   deleted = false;
   closed = false;
   getCalls = 0;
+  lastOwnerId: string | undefined;
 
-  async ingest(source: UploadSource): Promise<PublicFileRecord> {
+  async ingest(source: UploadSource, ownerId: string): Promise<PublicFileRecord> {
+    this.lastOwnerId = ownerId;
     const chunks: Buffer[] = [];
     for await (const chunk of source.stream) chunks.push(Buffer.from(chunk));
     if (source.wasTruncated()) throw new UploadTooLargeError();
@@ -43,16 +49,19 @@ class FakeFileService implements FileService {
     return { ...RECORD, originalName: source.filename, sourceBytes: this.uploaded.byteLength };
   }
 
-  async get(id: string): Promise<PublicFileRecord | undefined> {
+  async get(id: string, ownerId: string): Promise<PublicFileRecord | undefined> {
+    this.lastOwnerId = ownerId;
     this.getCalls += 1;
     return id === RECORD.id && !this.deleted ? RECORD : undefined;
   }
 
-  async readSchema(id: string): Promise<string | undefined> {
+  async readSchema(id: string, ownerId: string): Promise<string | undefined> {
+    this.lastOwnerId = ownerId;
     return id === RECORD.id && !this.deleted ? "[schema]\n" : undefined;
   }
 
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, ownerId: string): Promise<boolean> {
+    this.lastOwnerId = ownerId;
     if (id !== RECORD.id || this.deleted) return false;
     this.deleted = true;
     return true;

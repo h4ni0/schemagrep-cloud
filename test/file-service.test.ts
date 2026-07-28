@@ -38,6 +38,8 @@ afterEach(async () => {
   );
 });
 
+const OWNER_ID = "tenant-a";
+
 describe("EphemeralFileService", () => {
   test("retains only encoded and schema artifacts, then expires both", async () => {
     const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
@@ -54,16 +56,23 @@ describe("EphemeralFileService", () => {
       now: () => now,
     });
 
-    const record = await service.ingest({
-      filename: "events.jsonl",
-      stream: Readable.from(['{"id":1}\n']),
-      wasTruncated: () => false,
-    });
+    const record = await service.ingest(
+      {
+        filename: "events.jsonl",
+        stream: Readable.from(['{"id":1}\n']),
+        wasTruncated: () => false,
+      },
+      OWNER_ID,
+    );
 
     expect(record.originalName).toBe("events.jsonl");
     expect(record.sourceBytes).toBe(9);
     expect(record.schemaBytes).toBe(9);
-    expect(await service.readSchema(record.id)).toBe("[schema]\n");
+    expect(await service.readSchema(record.id, OWNER_ID)).toBe("[schema]\n");
+    expect(await service.get(record.id, "tenant-b")).toBeUndefined();
+    expect(await service.readSchema(record.id, "tenant-b")).toBeUndefined();
+    expect(await service.delete(record.id, "tenant-b")).toBe(false);
+    expect(await service.get(record.id, OWNER_ID)).toEqual(record);
 
     const instanceNames = await readdir(storageBaseDirectory);
     expect(instanceNames).toHaveLength(1);
@@ -76,7 +85,7 @@ describe("EphemeralFileService", () => {
     expect(retainedArtifacts).toEqual(["artifact.sg", "schema.txt"]);
 
     now += 1001;
-    expect(await service.get(record.id)).toBeUndefined();
+    expect(await service.get(record.id, OWNER_ID)).toBeUndefined();
     expect(await readdir(join(storageBaseDirectory, instanceName))).toEqual([]);
     await service.close();
   });
@@ -93,11 +102,14 @@ describe("EphemeralFileService", () => {
 
     for (const filename of ["../../events.jsonl", "..\\..\\events.jsonl", "\0events.jsonl"]) {
       await expect(
-        service.ingest({
-          filename,
-          stream: Readable.from(['{"id":1}\n']),
-          wasTruncated: () => false,
-        }),
+        service.ingest(
+          {
+            filename,
+            stream: Readable.from(['{"id":1}\n']),
+            wasTruncated: () => false,
+          },
+          OWNER_ID,
+        ),
       ).rejects.toBeInstanceOf(InvalidFilenameError);
     }
 
@@ -117,11 +129,14 @@ describe("EphemeralFileService", () => {
     });
 
     await expect(
-      service.ingest({
-        filename: "empty.jsonl",
-        stream: Readable.from([]),
-        wasTruncated: () => false,
-      }),
+      service.ingest(
+        {
+          filename: "empty.jsonl",
+          stream: Readable.from([]),
+          wasTruncated: () => false,
+        },
+        OWNER_ID,
+      ),
     ).rejects.toBeInstanceOf(EmptyUploadError);
 
     expect(runner.encodeCalls).toBe(0);
@@ -139,11 +154,14 @@ describe("EphemeralFileService", () => {
       runner: new FakeProcessor(),
     });
 
-    const ingest = service.ingest({
-      filename: "archive.zip",
-      stream: Readable.from(["not a supported file"]),
-      wasTruncated: () => false,
-    });
+    const ingest = service.ingest(
+      {
+        filename: "archive.zip",
+        stream: Readable.from(["not a supported file"]),
+        wasTruncated: () => false,
+      },
+      OWNER_ID,
+    );
 
     await expect(ingest).rejects.toBeInstanceOf(UnsupportedFileTypeError);
     expect(await readdir(storageBaseDirectory)).toEqual([]);

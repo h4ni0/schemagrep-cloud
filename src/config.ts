@@ -4,6 +4,13 @@ import { fileURLToPath } from "node:url";
 
 const MEBIBYTE = 1024 * 1024;
 
+const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+export interface ApiCredentialConfig {
+  tenantId: string;
+  secret: string;
+}
+
 export interface ServiceConfig {
   host: string;
   port: number;
@@ -14,6 +21,10 @@ export interface ServiceConfig {
   maxUploadBytes: number;
   maxArtifactBytes: number;
   maxSchemaBytes: number;
+  authDisabled: boolean;
+  apiCredentials: readonly ApiCredentialConfig[];
+  rateLimitMax: number;
+  rateLimitWindowMs: number;
 }
 
 function parseInteger(
@@ -33,7 +44,64 @@ function parseInteger(
   return parsed;
 }
 
+function parseBoolean(name: string, value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${name} must be true or false; received ${value}`);
+}
+
+function parseApiCredentials(value: string | undefined, authDisabled: boolean): ApiCredentialConfig[] {
+  if (authDisabled && value === undefined) return [];
+  if (value === undefined) {
+    throw new Error(
+      "SCHEMAGREP_API_KEYS is required unless AUTH_DISABLED=true. " +
+        'Use a JSON object such as {\"local\":\"a-secret-with-at-least-32-bytes\"}.',
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("SCHEMAGREP_API_KEYS must be a valid JSON object");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("SCHEMAGREP_API_KEYS must be a JSON object mapping tenant IDs to secrets");
+  }
+
+  const credentials: ApiCredentialConfig[] = [];
+  const seenSecrets = new Set<string>();
+  for (const [tenantId, secret] of Object.entries(parsed)) {
+    if (!TENANT_ID_PATTERN.test(tenantId)) {
+      throw new Error(`Invalid tenant ID in SCHEMAGREP_API_KEYS: ${tenantId}`);
+    }
+    if (
+      typeof secret !== "string" ||
+      Buffer.byteLength(secret, "utf8") < 32 ||
+      Buffer.byteLength(secret, "utf8") > 512
+    ) {
+      throw new Error(`API key for tenant ${tenantId} must contain 32 to 512 UTF-8 bytes`);
+    }
+    if (seenSecrets.has(secret)) {
+      throw new Error("Each tenant in SCHEMAGREP_API_KEYS must use a unique API key");
+    }
+    seenSecrets.add(secret);
+    credentials.push({ tenantId, secret });
+  }
+
+  if (!authDisabled && credentials.length === 0) {
+    throw new Error("SCHEMAGREP_API_KEYS must configure at least one tenant");
+  }
+  if (credentials.length > 100) {
+    throw new Error("SCHEMAGREP_API_KEYS supports at most 100 tenants");
+  }
+  return credentials;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
+  const authDisabled = parseBoolean("AUTH_DISABLED", env.AUTH_DISABLED, false);
+  const apiCredentials = parseApiCredentials(env.SCHEMAGREP_API_KEYS, authDisabled);
   const maxUploadBytes = parseInteger(
     "MAX_UPLOAD_BYTES",
     env.MAX_UPLOAD_BYTES,
@@ -71,6 +139,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
       4 * MEBIBYTE,
       1,
       64 * MEBIBYTE,
+    ),
+    authDisabled,
+    apiCredentials,
+    rateLimitMax: parseInteger("RATE_LIMIT_MAX", env.RATE_LIMIT_MAX, 60, 1, 10_000),
+    rateLimitWindowMs: parseInteger(
+      "RATE_LIMIT_WINDOW_MS",
+      env.RATE_LIMIT_WINDOW_MS,
+      60_000,
+      1000,
+      3_600_000,
     ),
   };
 }

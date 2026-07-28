@@ -92,7 +92,7 @@ export class EphemeralFileService implements FileService {
     this.sweepTimer.unref();
   }
 
-  async ingest(source: UploadSource): Promise<PublicFileRecord> {
+  async ingest(source: UploadSource, ownerId: string): Promise<PublicFileRecord> {
     const safeName = validateUploadFilename(source.filename);
     const extension = extname(safeName).toLowerCase();
     const codec = CODECS_BY_EXTENSION[extension];
@@ -122,6 +122,7 @@ export class EphemeralFileService implements FileService {
 
       const createdAtMs = this.now();
       const record: StoredFileRecord = {
+        ownerId,
         id,
         status: "ready",
         codec,
@@ -142,25 +143,26 @@ export class EphemeralFileService implements FileService {
     }
   }
 
-  async get(id: string): Promise<PublicFileRecord | undefined> {
+  async get(id: string, ownerId: string): Promise<PublicFileRecord | undefined> {
     await this.expireIfNeeded(id);
     const record = this.files.get(id);
-    return record === undefined ? undefined : this.toPublicRecord(record);
+    return record === undefined || record.ownerId !== ownerId
+      ? undefined
+      : this.toPublicRecord(record);
   }
 
-  async readSchema(id: string): Promise<string | undefined> {
+  async readSchema(id: string, ownerId: string): Promise<string | undefined> {
     await this.expireIfNeeded(id);
     const record = this.files.get(id);
-    if (record === undefined) return undefined;
+    if (record === undefined || record.ownerId !== ownerId) return undefined;
     return readFile(record.schemaPath, "utf8");
   }
 
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, ownerId: string): Promise<boolean> {
     const record = this.files.get(id);
-    if (record === undefined) return false;
+    if (record === undefined || record.ownerId !== ownerId) return false;
 
-    this.files.delete(id);
-    await rm(record.directory, { recursive: true, force: true });
+    await this.remove(record);
     return true;
   }
 
@@ -195,14 +197,19 @@ export class EphemeralFileService implements FileService {
   private async expireIfNeeded(id: string): Promise<void> {
     const record = this.files.get(id);
     if (record !== undefined && Date.parse(record.expiresAt) <= this.now()) {
-      await this.delete(id);
+      await this.remove(record);
     }
   }
 
   private async deleteExpired(): Promise<void> {
     const now = this.now();
     const expired = [...this.files.values()].filter((record) => Date.parse(record.expiresAt) <= now);
-    await Promise.all(expired.map((record) => this.delete(record.id)));
+    await Promise.all(expired.map((record) => this.remove(record)));
+  }
+
+  private async remove(record: StoredFileRecord): Promise<void> {
+    this.files.delete(record.id);
+    await rm(record.directory, { recursive: true, force: true });
   }
 
   private toPublicRecord(record: StoredFileRecord): PublicFileRecord {

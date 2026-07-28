@@ -14,6 +14,7 @@ export interface PublicFileRecord {
 }
 
 export interface StoredFileRecord extends PublicFileRecord {
+  ownerId: string;
   directory: string;
   artifactPath: string;
   schemaPath: string;
@@ -26,9 +27,9 @@ export interface UploadSource {
 }
 
 export interface FileService {
-  ingest(source: UploadSource): Promise<PublicFileRecord>;
-  get(id: string): Promise<PublicFileRecord | undefined>;
-  readSchema(id: string): Promise<string | undefined>;
-  delete(id: string): Promise<boolean>;
+  ingest(source: UploadSource, ownerId: string): Promise<PublicFileRecord>;
+  get(id: string, ownerId: string): Promise<PublicFileRecord | undefined>;
+  readSchema(id: string, ownerId: string): Promise<string | undefined>;
+  delete(id: string, ownerId: string): Promise<boolean>;
   close(): Promise<void>;
 }
