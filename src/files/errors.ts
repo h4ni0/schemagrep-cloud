@@ -1,0 +1,25 @@
+export class UnsupportedFileTypeError extends Error {
+  constructor(filename: string) {
+    super(`Unsupported file type for ${filename}`);
+    this.name = "UnsupportedFileTypeError";
+  }
+}
+
+export class UploadTooLargeError extends Error {
+  constructor() {
+    super("Upload exceeds the configured size limit");
+    this.name = "UploadTooLargeError";
+  }
+}
+
+export type ProcessFailureKind = "exit" | "output_limit" | "spawn" | "timeout";
+
+export class SchemagrepProcessError extends Error {
+  constructor(
+    public readonly kind: ProcessFailureKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SchemagrepProcessError";
+  }
+}
