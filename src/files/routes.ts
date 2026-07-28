@@ -1,5 +1,11 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { SchemagrepProcessError, UnsupportedFileTypeError, UploadTooLargeError } from "./errors";
+import {
+  EmptyUploadError,
+  InvalidFilenameError,
+  SchemagrepProcessError,
+  UnsupportedFileTypeError,
+  UploadTooLargeError,
+} from "./errors";
 import type { FileService } from "./types";
 
 interface FileRouteOptions {
@@ -8,6 +14,14 @@ interface FileRouteOptions {
 
 interface FileParams {
   id: string;
+}
+
+const FILE_ID_PATTERN = /^file_[0-9a-f]{32}$/;
+
+function sendFileNotFound(reply: FastifyReply): FastifyReply {
+  return reply.code(404).send({
+    error: { code: "file_not_found", message: "File does not exist or has expired" },
+  });
 }
 
 function sendKnownError(error: unknown, reply: FastifyReply): boolean {
@@ -19,6 +33,18 @@ function sendKnownError(error: unknown, reply: FastifyReply): boolean {
   if (error instanceof UploadTooLargeError || fastifyCode === "FST_REQ_FILE_TOO_LARGE") {
     void reply.code(413).send({
       error: { code: "upload_too_large", message: "Upload exceeds the configured size limit" },
+    });
+    return true;
+  }
+  if (error instanceof EmptyUploadError) {
+    void reply.code(400).send({
+      error: { code: "empty_file", message: "Uploaded file must not be empty" },
+    });
+    return true;
+  }
+  if (error instanceof InvalidFilenameError) {
+    void reply.code(400).send({
+      error: { code: "invalid_filename", message: "Uploaded filename is invalid" },
     });
     return true;
   }
@@ -92,32 +118,23 @@ export async function registerFileRoutes(
   });
 
   app.get<{ Params: FileParams }>("/v1/files/:id", async (request, reply) => {
+    if (!FILE_ID_PATTERN.test(request.params.id)) return sendFileNotFound(reply);
     const record = await options.fileService.get(request.params.id);
-    if (record === undefined) {
-      return reply.code(404).send({
-        error: { code: "file_not_found", message: "File does not exist or has expired" },
-      });
-    }
+    if (record === undefined) return sendFileNotFound(reply);
     return record;
   });
 
   app.get<{ Params: FileParams }>("/v1/files/:id/schema", async (request, reply) => {
+    if (!FILE_ID_PATTERN.test(request.params.id)) return sendFileNotFound(reply);
     const schema = await options.fileService.readSchema(request.params.id);
-    if (schema === undefined) {
-      return reply.code(404).send({
-        error: { code: "file_not_found", message: "File does not exist or has expired" },
-      });
-    }
+    if (schema === undefined) return sendFileNotFound(reply);
     return reply.type("text/plain; charset=utf-8").send(schema);
   });
 
   app.delete<{ Params: FileParams }>("/v1/files/:id", async (request, reply) => {
+    if (!FILE_ID_PATTERN.test(request.params.id)) return sendFileNotFound(reply);
     const deleted = await options.fileService.delete(request.params.id);
-    if (!deleted) {
-      return reply.code(404).send({
-        error: { code: "file_not_found", message: "File does not exist or has expired" },
-      });
-    }
+    if (!deleted) return sendFileNotFound(reply);
     return reply.code(204).send();
   });
 }

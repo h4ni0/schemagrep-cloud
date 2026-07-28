@@ -3,12 +3,19 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { UnsupportedFileTypeError } from "../src/files/errors";
+import {
+  EmptyUploadError,
+  InvalidFilenameError,
+  UnsupportedFileTypeError,
+} from "../src/files/errors";
 import { EphemeralFileService } from "../src/files/service";
 import type { SchemagrepProcessor } from "../src/schemagrep/runner";
 
 class FakeProcessor implements SchemagrepProcessor {
+  encodeCalls = 0;
+  schemaCalls = 0;
   async encode(sourcePath: string, outputPath: string): Promise<number> {
+    this.encodeCalls += 1;
     const source = await readFile(sourcePath);
     const artifact = Buffer.concat([Buffer.from("encoded:"), source]);
     await writeFile(outputPath, artifact, { flag: "wx", mode: 0o600 });
@@ -16,6 +23,7 @@ class FakeProcessor implements SchemagrepProcessor {
   }
 
   async schema(_sourcePath: string, outputPath: string): Promise<number> {
+    this.schemaCalls += 1;
     const schema = "[schema]\n";
     await writeFile(outputPath, schema, { flag: "wx", mode: 0o600 });
     return Buffer.byteLength(schema);
@@ -47,7 +55,7 @@ describe("EphemeralFileService", () => {
     });
 
     const record = await service.ingest({
-      filename: "../../events.jsonl",
+      filename: "events.jsonl",
       stream: Readable.from(['{"id":1}\n']),
       wasTruncated: () => false,
     });
@@ -70,6 +78,54 @@ describe("EphemeralFileService", () => {
     now += 1001;
     expect(await service.get(record.id)).toBeUndefined();
     expect(await readdir(join(storageBaseDirectory, instanceName))).toEqual([]);
+    await service.close();
+  });
+
+  test("rejects path-like and control-character filenames", async () => {
+    const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
+    temporaryDirectories.push(storageBaseDirectory);
+    const service = new EphemeralFileService({
+      storageBaseDirectory,
+      fileTtlMs: 1000,
+      maxUploadBytes: 1024,
+      runner: new FakeProcessor(),
+    });
+
+    for (const filename of ["../../events.jsonl", "..\\..\\events.jsonl", "\0events.jsonl"]) {
+      await expect(
+        service.ingest({
+          filename,
+          stream: Readable.from(['{"id":1}\n']),
+          wasTruncated: () => false,
+        }),
+      ).rejects.toBeInstanceOf(InvalidFilenameError);
+    }
+
+    expect(await readdir(storageBaseDirectory)).toEqual([]);
+    await service.close();
+  });
+
+  test("rejects an empty file before invoking schemagrep", async () => {
+    const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
+    temporaryDirectories.push(storageBaseDirectory);
+    const runner = new FakeProcessor();
+    const service = new EphemeralFileService({
+      storageBaseDirectory,
+      fileTtlMs: 1000,
+      maxUploadBytes: 1024,
+      runner,
+    });
+
+    await expect(
+      service.ingest({
+        filename: "empty.jsonl",
+        stream: Readable.from([]),
+        wasTruncated: () => false,
+      }),
+    ).rejects.toBeInstanceOf(EmptyUploadError);
+
+    expect(runner.encodeCalls).toBe(0);
+    expect(runner.schemaCalls).toBe(0);
     await service.close();
   });
 

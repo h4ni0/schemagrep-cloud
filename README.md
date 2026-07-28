@@ -93,6 +93,20 @@ The upload field must be named `file`. Supported filename extensions are `.csv`,
 
 The byte fields returned in metadata are diagnostic measurements, not compression guarantees.
 
+## Security boundary
+
+The current API:
+
+- streams uploads through a fixed byte limit;
+- rejects empty files, unsupported extensions, unsafe filenames, and malformed public IDs;
+- strips multipart path components before filenames reach storage validation;
+- generates storage paths from random server-side IDs, never client filenames or URL parameters;
+- invokes schemagrep with fixed arguments and `shell: false`;
+- bounds process time, generated artifact size, schema size, and captured stderr;
+- deletes the raw upload after processing and deletes retained artifacts on request or TTL expiry.
+
+This is not yet a complete public-internet boundary. Authentication, per-client rate limits, quotas, and OS/container isolation for the worker still need to be implemented before accepting arbitrary anonymous uploads.
+
 ## Checks
 
 ```bash

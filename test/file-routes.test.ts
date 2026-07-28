@@ -2,11 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app";
 import type { ServiceConfig } from "../src/config";
-import { UploadTooLargeError } from "../src/files/errors";
+import { EmptyUploadError, UploadTooLargeError } from "../src/files/errors";
 import type { FileService, PublicFileRecord, UploadSource } from "../src/files/types";
 
 const RECORD: PublicFileRecord = {
-  id: "file_test",
+  id: "file_0123456789abcdef0123456789abcdef",
   status: "ready",
   codec: "jsonl",
   originalName: "events.jsonl",
@@ -32,16 +32,19 @@ class FakeFileService implements FileService {
   uploaded: Buffer | undefined;
   deleted = false;
   closed = false;
+  getCalls = 0;
 
   async ingest(source: UploadSource): Promise<PublicFileRecord> {
     const chunks: Buffer[] = [];
     for await (const chunk of source.stream) chunks.push(Buffer.from(chunk));
     if (source.wasTruncated()) throw new UploadTooLargeError();
     this.uploaded = Buffer.concat(chunks);
+    if (this.uploaded.byteLength === 0) throw new EmptyUploadError();
     return { ...RECORD, originalName: source.filename, sourceBytes: this.uploaded.byteLength };
   }
 
   async get(id: string): Promise<PublicFileRecord | undefined> {
+    this.getCalls += 1;
     return id === RECORD.id && !this.deleted ? RECORD : undefined;
   }
 
@@ -95,7 +98,7 @@ describe("ephemeral file routes", () => {
     expect(response.statusCode).toBe(201);
     expect(fileService.uploaded?.toString("utf8")).toBe('{"id":1}\n');
     expect(JSON.parse(response.body)).toMatchObject({
-      id: "file_test",
+      id: RECORD.id,
       status: "ready",
       originalName: "events.jsonl",
       sourceBytes: 9,
@@ -120,14 +123,32 @@ describe("ephemeral file routes", () => {
     });
   });
 
+  test("rejects an empty multipart file", async () => {
+    const fileService = new FakeFileService();
+    app = buildApp({ config: CONFIG, fileService });
+    const upload = multipartPayload("empty.jsonl", "");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/files",
+      headers: { "content-type": `multipart/form-data; boundary=${upload.boundary}` },
+      payload: upload.payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({
+      error: { code: "empty_file", message: "Uploaded file must not be empty" },
+    });
+  });
+
   test("serves metadata and schema, then deletes the file", async () => {
     const fileService = new FakeFileService();
     app = buildApp({ config: CONFIG, fileService });
 
-    const metadata = await app.inject({ method: "GET", url: "/v1/files/file_test" });
-    const schema = await app.inject({ method: "GET", url: "/v1/files/file_test/schema" });
-    const deleted = await app.inject({ method: "DELETE", url: "/v1/files/file_test" });
-    const missing = await app.inject({ method: "GET", url: "/v1/files/file_test" });
+    const metadata = await app.inject({ method: "GET", url: `/v1/files/${RECORD.id}` });
+    const schema = await app.inject({ method: "GET", url: `/v1/files/${RECORD.id}/schema` });
+    const deleted = await app.inject({ method: "DELETE", url: `/v1/files/${RECORD.id}` });
+    const missing = await app.inject({ method: "GET", url: `/v1/files/${RECORD.id}` });
 
     expect(metadata.statusCode).toBe(200);
     expect(schema.statusCode).toBe(200);
@@ -135,5 +156,18 @@ describe("ephemeral file routes", () => {
     expect(schema.body).toBe("[schema]\n");
     expect(deleted.statusCode).toBe(204);
     expect(missing.statusCode).toBe(404);
+  });
+
+  test("rejects malformed identifiers without consulting storage", async () => {
+    const fileService = new FakeFileService();
+    app = buildApp({ config: CONFIG, fileService });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/files/file_not-hex",
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(fileService.getCalls).toBe(0);
   });
 });

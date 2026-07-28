@@ -1,3 +1,17 @@
+export class EmptyUploadError extends Error {
+  constructor() {
+    super("Uploaded file is empty");
+    this.name = "EmptyUploadError";
+  }
+}
+
+export class InvalidFilenameError extends Error {
+  constructor() {
+    super("Uploaded filename is invalid");
+    this.name = "InvalidFilenameError";
+  }
+}
+
 export class UnsupportedFileTypeError extends Error {
   constructor(filename: string) {
     super(`Unsupported file type for ${filename}`);

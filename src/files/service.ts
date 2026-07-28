@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { extname, join } from "node:path";
 import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ServiceConfig } from "../config";
 import { SchemagrepRunner, type SchemagrepProcessor } from "../schemagrep/runner";
-import { UnsupportedFileTypeError, UploadTooLargeError } from "./errors";
+import {
+  EmptyUploadError,
+  InvalidFilenameError,
+  UnsupportedFileTypeError,
+  UploadTooLargeError,
+} from "./errors";
 import type {
   FileService,
   PublicFileRecord,
@@ -23,6 +28,20 @@ const CODECS_BY_EXTENSION: Readonly<Record<string, SupportedCodec>> = {
   ".ndjson": "jsonl",
   ".txt": "log",
 };
+
+function validateUploadFilename(filename: string): string {
+  const containsUnsafeCharacter = /[\u0000-\u001f\u007f/\\]/u.test(filename);
+  if (
+    filename.length === 0 ||
+    Buffer.byteLength(filename, "utf8") > 255 ||
+    filename === "." ||
+    filename === ".." ||
+    containsUnsafeCharacter
+  ) {
+    throw new InvalidFilenameError();
+  }
+  return filename;
+}
 
 class UploadLimitTransform extends Transform {
   bytesWritten = 0;
@@ -74,7 +93,7 @@ export class EphemeralFileService implements FileService {
   }
 
   async ingest(source: UploadSource): Promise<PublicFileRecord> {
-    const safeName = basename(source.filename);
+    const safeName = validateUploadFilename(source.filename);
     const extension = extname(safeName).toLowerCase();
     const codec = CODECS_BY_EXTENSION[extension];
     if (codec === undefined) throw new UnsupportedFileTypeError(safeName);
@@ -95,6 +114,7 @@ export class EphemeralFileService implements FileService {
         createWriteStream(sourcePath, { flags: "wx", mode: 0o600 }),
       );
       if (source.wasTruncated()) throw new UploadTooLargeError();
+      if (limiter.bytesWritten === 0) throw new EmptyUploadError();
 
       await this.options.runner.encode(sourcePath, artifactPath);
       const schemaBytes = await this.options.runner.schema(sourcePath, schemaPath);
