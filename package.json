@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bun --watch src/server.ts",
     "start": "bun src/server.ts",
+    "setup-engine": "make -C vendor/schemagrep",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

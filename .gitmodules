@@ -1,0 +1,3 @@
+[submodule "vendor/schemagrep"]
+	path = vendor/schemagrep
+	url = https://github.com/hshei/schemagrep.git

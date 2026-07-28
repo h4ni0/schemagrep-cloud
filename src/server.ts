@@ -1,7 +1,9 @@
 import { buildApp } from "./app";
 import { loadConfig } from "./config";
+import { assertSchemagrepBinary } from "./schemagrep/probe";
 
 const config = loadConfig();
+await assertSchemagrepBinary(config.schemagrepBinary);
 const app = buildApp({ config, logger: true });
 
 let shuttingDown = false;

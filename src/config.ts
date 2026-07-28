@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 const MEBIBYTE = 1024 * 1024;
 
@@ -44,7 +45,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   return {
     host: env.HOST ?? "127.0.0.1",
     port: parseInteger("PORT", env.PORT, 3000, 1, 65_535),
-    schemagrepBinary: env.SCHEMAGREP_BIN ?? "schemagrep",
+    schemagrepBinary:
+      env.SCHEMAGREP_BIN ??
+      fileURLToPath(new URL("../vendor/schemagrep/schemagrep", import.meta.url)),
     storageBaseDirectory: env.STORAGE_DIR ?? join(tmpdir(), "schemagrep-cloud"),
     fileTtlMs: parseInteger("FILE_TTL_SECONDS", env.FILE_TTL_SECONDS, 3600, 1, 86_400) * 1000,
     processTimeoutMs: parseInteger(
