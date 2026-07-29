@@ -67,6 +67,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     "/health",
     "/assets/dashboard.css",
     "/assets/dashboard.js",
+    "/assets/manrope-latin-wght-normal.woff2",
   ]);
   app.decorateRequest("tenantId", "");
 

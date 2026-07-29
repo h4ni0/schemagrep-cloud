@@ -33,11 +33,16 @@ describe("hosted beta application", () => {
   });
 
   test("serves a public dashboard with isolated browser assets", async () => {
-    app = buildApp({ config: loadConfig({ AUTH_DISABLED: "true" }) });
+    app = buildApp({
+      config: loadConfig({
+        SCHEMAGREP_API_KEYS: JSON.stringify({ beta: BETA_KEY }),
+      }),
+    });
 
     const page = await app.inject({ method: "GET", url: "/" });
     const stylesheet = await app.inject({ method: "GET", url: "/assets/dashboard.css" });
     const script = await app.inject({ method: "GET", url: "/assets/dashboard.js" });
+    const font = await app.inject({ method: "GET", url: "/assets/manrope-latin-wght-normal.woff2" });
 
     expect(page.statusCode).toBe(200);
     expect(page.headers["content-type"]).toContain("text/html");
@@ -50,6 +55,9 @@ describe("hosted beta application", () => {
     expect(stylesheet.headers["content-type"]).toContain("text/css");
     expect(script.statusCode).toBe(200);
     expect(script.headers["content-type"]).toContain("text/javascript");
+    expect(font.statusCode).toBe(200);
+    expect(font.headers["content-type"]).toContain("font/woff2");
+    expect(font.headers["cache-control"]).toContain("immutable");
   });
 
   test("validates an invite without exposing the tenant and records aggregate use", async () => {

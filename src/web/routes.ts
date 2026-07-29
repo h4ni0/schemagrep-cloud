@@ -2,15 +2,16 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
-const [dashboardHtml, dashboardCss, dashboardJavaScript] = await Promise.all([
+const [dashboardHtml, dashboardCss, dashboardJavaScript, manropeLatinWoff2] = await Promise.all([
   readFile(fileURLToPath(new URL("./index.html", import.meta.url)), "utf8"),
   readFile(fileURLToPath(new URL("./dashboard.css", import.meta.url)), "utf8"),
   readFile(fileURLToPath(new URL("./dashboard.js", import.meta.url)), "utf8"),
+  readFile(fileURLToPath(new URL("./fonts/manrope-latin-wght-normal.woff2", import.meta.url))),
 ]);
 
 function secureBrowserResponse(reply: FastifyReply): FastifyReply {
   return reply.headers({
-    "content-security-policy": "default-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; script-src 'self'; style-src 'self'",
+    "content-security-policy": "default-src 'none'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; script-src 'self'; style-src 'self'",
     "cross-origin-opener-policy": "same-origin",
     "cross-origin-resource-policy": "same-origin",
     "permissions-policy": "camera=(), geolocation=(), microphone=()",
@@ -35,4 +36,9 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
     .header("cache-control", "no-store")
     .type("text/javascript; charset=utf-8")
     .send(dashboardJavaScript));
+
+  app.get("/assets/manrope-latin-wght-normal.woff2", async (_request, reply) => secureBrowserResponse(reply)
+    .header("cache-control", "public, max-age=31536000, immutable")
+    .type("font/woff2")
+    .send(manropeLatinWoff2));
 }
