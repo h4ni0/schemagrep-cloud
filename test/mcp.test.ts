@@ -119,6 +119,26 @@ describe("schemagrep MCP endpoint", () => {
         value: "push",
       },
     });
+    const numericCount = await alpha.callTool({
+      name: "schemagrep_query",
+      arguments: {
+        fileId: FILE_ID,
+        mode: "count",
+        target: { key: "status" },
+        filters: [],
+        value: 404,
+      },
+    });
+    const malformedProjection = await alpha.callTool({
+      name: "schemagrep_query",
+      arguments: {
+        fileId: FILE_ID,
+        mode: "grep",
+        target: { key: "status" },
+        filters: [{ field: { key: "status" }, op: "ge", value: 400 }],
+        limit: 3,
+      },
+    });
 
     const beta = await connectClient(endpoint, BETA_KEY, "beta-client");
     const hidden = await beta.callTool({
@@ -131,6 +151,8 @@ describe("schemagrep MCP endpoint", () => {
       "schemagrep_query",
     ]);
     expect(tools.tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
+    expect(tools.tools[0]?.description).toContain("exactly once");
+    expect(tools.tools[1]?.description).toContain("target MUST be null");
     expect(schema.structuredContent).toEqual({ fileId: FILE_ID, schema: "[schema]\n" });
     expect(count.structuredContent).toEqual({
       fileId: FILE_ID,
@@ -145,6 +167,10 @@ describe("schemagrep MCP endpoint", () => {
         outputBytes: 1,
       },
     });
+    expect(numericCount.structuredContent).toMatchObject({
+      result: { query: { value: "404" } },
+    });
+    expect(malformedProjection.isError).toBe(true);
     expect(hidden.isError).toBe(true);
   });
 

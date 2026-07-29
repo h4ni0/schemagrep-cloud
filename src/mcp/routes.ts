@@ -8,10 +8,12 @@ import {
 import type { NodeIncomingMessageLike } from "@modelcontextprotocol/node";
 import type { FileService } from "../files/types";
 import { createSchemagrepMcpHandler } from "./server";
+import type { ProductTelemetry } from "../telemetry/product";
 
 interface McpRouteOptions {
   fileService: FileService;
   allowedHostnames: readonly string[];
+  productTelemetry?: ProductTelemetry;
 }
 
 export async function registerMcpRoutes(
@@ -43,7 +45,19 @@ export async function registerMcpRoutes(
         auth,
         [Symbol.asyncIterator]: () => request.raw[Symbol.asyncIterator](),
       };
-      await nodeHandler(nodeRequest, reply.raw, request.body);
+      const started = performance.now();
+      try {
+        await nodeHandler(nodeRequest, reply.raw, request.body);
+      } finally {
+        const statusCode = reply.raw.statusCode;
+        options.productTelemetry?.record({
+          tenantId: request.tenantId,
+          action: "mcp",
+          outcome: statusCode < 400 ? "ok" : "error",
+          status: statusCode < 300 ? "2xx" : statusCode < 400 ? "3xx" : statusCode < 500 ? "4xx" : "5xx",
+          durationMs: performance.now() - started,
+        });
+      }
     },
   });
 

@@ -8,7 +8,8 @@
     "start": "bun src/server.ts",
     "setup-engine": "make -C vendor/schemagrep",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "telemetry:report": "bun src/telemetry/report.ts"
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.0",

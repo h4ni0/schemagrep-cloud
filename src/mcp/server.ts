@@ -11,11 +11,17 @@ const queryFieldSchema = z.union([
   z.strictObject({ key: z.string().min(1).max(256) }),
 ]);
 
+const exactValueSchema = z.union([
+  z.string().max(4096),
+  z.number().finite(),
+  z.null(),
+]);
+
 const queryFilterSchema = z.discriminatedUnion("op", [
   z.strictObject({
     field: queryFieldSchema,
     op: z.enum(["eq", "ne"]),
-    value: z.string().max(4096),
+    value: exactValueSchema,
   }),
   z.strictObject({
     field: queryFieldSchema,
@@ -29,15 +35,66 @@ const queryFilterSchema = z.discriminatedUnion("op", [
   }),
 ]);
 
-const queryToolInputSchema = z.strictObject({
-  fileId: z.string().regex(FILE_ID_PATTERN),
-  mode: z.enum(QUERY_MODES),
-  target: queryFieldSchema.nullable(),
-  filters: z.array(queryFilterSchema).max(8),
-  value: z.string().max(4096).optional(),
-  limit: z.number().int().min(1).max(100).optional(),
-  template: z.number().int().min(0).max(1_000_000).optional(),
-});
+const fileIdSchema = z.string().regex(FILE_ID_PATTERN);
+const filtersSchema = z.array(queryFilterSchema).max(8);
+const templateSchema = z.number().int().min(0).max(1_000_000).optional();
+const grepLimitSchema = z.number().int().min(1).max(100).optional()
+  .describe('Only for mode "grep".');
+
+const queryToolInputSchema = z.union([
+  z.strictObject({
+    fileId: fileIdSchema,
+    mode: z.literal("rows"),
+    target: z.null(),
+    filters: z.array(queryFilterSchema).max(0),
+  }),
+  z.strictObject({
+    fileId: fileIdSchema,
+    mode: z.enum(["min", "max", "distinct", "const"]),
+    target: queryFieldSchema,
+    filters: z.array(queryFilterSchema).max(0),
+    template: templateSchema,
+  }),
+  z.strictObject({
+    fileId: fileIdSchema,
+    mode: z.enum(["sum", "avg", "argmax", "argmin"]),
+    target: queryFieldSchema,
+    filters: filtersSchema,
+    template: templateSchema,
+  }),
+  z.strictObject({
+    fileId: fileIdSchema,
+    mode: z.literal("count"),
+    target: queryFieldSchema,
+    filters: filtersSchema,
+    value: exactValueSchema,
+    template: templateSchema,
+  }),
+  z.strictObject({
+    fileId: fileIdSchema,
+    mode: z.literal("count"),
+    target: z.null(),
+    filters: filtersSchema.min(1),
+    template: templateSchema,
+  }),
+  z.strictObject({
+    fileId: fileIdSchema,
+    mode: z.literal("grep"),
+    target: queryFieldSchema,
+    filters: filtersSchema,
+    value: exactValueSchema,
+    limit: grepLimitSchema,
+    template: templateSchema,
+  }),
+  z.strictObject({
+    fileId: fileIdSchema,
+    mode: z.literal("grep"),
+    target: z.null(),
+    filters: filtersSchema.min(1),
+    limit: grepLimitSchema,
+    template: templateSchema,
+  }),
+]);
 
 const schemaToolOutputSchema = z.strictObject({
   fileId: z.string(),
@@ -90,7 +147,7 @@ function createTenantServer(
     { name: "schemagrep-cloud", version: "0.0.0" },
     {
       instructions:
-        "Read a file's schemagrep schema before querying it. Use schemagrep_query for exact counts, filters, aggregates, and bounded record evidence. Never infer a total count from a limited grep result.",
+        "Call schemagrep_get_schema exactly once as the first action; after it succeeds, do not call it again. Use schema facts directly when conclusive; otherwise use schemagrep_query. For filter-only count or grep, target must be null. grep returns complete matching records, not a projected target field. Use argmax or argmin directly when both the extremum and its count are requested. Set limit only for grep. Never infer a total count from limited grep evidence.",
     },
   );
 
@@ -99,7 +156,7 @@ function createTenantServer(
     {
       title: "Read schemagrep schema",
       description:
-        "Read the schema and query primer for a tenant-owned uploaded file. Call this before schemagrep_query so field coordinates and schema facts are known.",
+        "Read the schema and query primer for a tenant-owned uploaded file. Call exactly once as the first action. After this succeeds, do not call it again in the same question.",
       inputSchema: z.strictObject({ fileId: z.string().regex(FILE_ID_PATTERN) }),
       outputSchema: schemaToolOutputSchema,
       annotations: {
@@ -128,7 +185,7 @@ function createTenantServer(
     {
       title: "Query an uploaded file",
       description:
-        "Run a deterministic query against a tenant-owned uploaded file. CSV fields use col, logs use slot, and JSON/JSONL use key or slot. Filters are ANDed. grep evidence is limited to 1-100 records and reports whether more matches exist.",
+        "Run one deterministic query. Modes: rows returns the total; count/grep accept either target+value, or target=null with one or more filters. For filter-only count/grep, target MUST be null; grep returns complete matching records and does not use target for projection. min/max/distinct/const use a target and no filters. sum/avg/argmax/argmin use a target and may use ANDed filters; argmax/argmin return the extremum and its count in one call. CSV fields use col, logs use slot, and JSON/JSONL use key or slot. limit is legal only for grep.",
       inputSchema: queryToolInputSchema,
       outputSchema: queryToolOutputSchema,
       annotations: {
@@ -138,16 +195,10 @@ function createTenantServer(
         openWorldHint: false,
       },
     },
-    async ({ fileId, mode, target, filters, value, limit, template }) => {
+    async (input) => {
+      const { fileId, ...request } = input;
       try {
-        const query = parseStructuredQueryRequest({
-          mode,
-          target,
-          filters,
-          value,
-          limit,
-          template,
-        });
+        const query = parseStructuredQueryRequest(request);
         const result = await fileService.query(fileId, tenantId, query);
         if (result === undefined) {
           return errorResult("file_not_found", "File does not exist or has expired");

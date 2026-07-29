@@ -133,6 +133,13 @@ function parseString(value: unknown, context: string, rejectLeadingFlag: boolean
   return value;
 }
 
+function parseExactValue(value: unknown, context: string, rejectLeadingFlag: boolean): string {
+  if (typeof value === "string") return parseString(value, context, rejectLeadingFlag);
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (value === null) return "null";
+  invalid(`${context} must be a string, finite number, or null`);
+}
+
 function parseFilter(value: unknown, index: number): QueryFilter {
   const context = `filters[${index}]`;
   if (!isObject(value)) invalid(`${context} must be an object`);
@@ -143,7 +150,7 @@ function parseFilter(value: unknown, index: number): QueryFilter {
     return {
       field,
       op: value.op,
-      value: parseString(value.value, `${context}.value`, false),
+      value: parseExactValue(value.value, `${context}.value`, false),
     };
   }
   if (typeof value.op === "string" && NUMERIC_OPERATORS.has(value.op)) {
@@ -190,7 +197,7 @@ export function parseStructuredQueryRequest(input: unknown): StructuredQueryRequ
   let value: string | undefined;
   if (input.value !== undefined) {
     if (mode !== "count" && mode !== "grep") invalid("value only composes with count or grep");
-    value = parseString(input.value, "value", true);
+    value = parseExactValue(input.value, "value", true);
   }
 
   if (TARGET_MODES.has(mode) && target === null) invalid(`${mode} requires a target`);

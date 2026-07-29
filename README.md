@@ -44,6 +44,18 @@ SCHEMAGREP_BIN=/absolute/path/to/hshei/schemagrep bun src/server.ts
 
 Startup rejects missing, non-executable, or unrelated binaries before the API begins listening.
 
+## Private beta dashboard
+
+Open `http://127.0.0.1:3000/` in a browser. The dashboard is public static
+HTML/CSS/JavaScript; it stores the invite key only in the current tab's memory.
+After unlocking, a user can upload a file, copy its `file_...` ID and hosted MCP
+configuration, copy a starter question, inspect expiry, or delete the artifact
+immediately. Uploads, schemas, queries, deletion, and MCP remain bearer-authenticated.
+
+The dashboard is an upload and connection surface, not a chat product.
+Customer-owned model clients still perform inference and send only structured
+schema/query tool calls to this service.
+
 ## Upload a JSONL file
 
 In the terminal making requests, export the key printed when the service started:
@@ -76,8 +88,8 @@ The query contract accepts `rows`, `count`, `grep`, `min`, `max`, `sum`, `avg`,
 `argmax`, `argmin`, `distinct`, and `const`. A target or filter field is
 `{"col":N}` for CSV, `{"slot":N}` for logs, and `{"slot":N}` or `{"key":"name"}`
 for JSON/JSONL. Up to eight filters are combined with AND. `eq` and `ne` take
-string values; `gt`, `ge`, `lt`, and `le` take numbers; `between` takes a
-two-number array.
+exact string, finite-number, or null values; `gt`, `ge`, `lt`, and `le` take
+numbers; `between` takes a two-number array.
 
 `grep` always has a bounded `limit` from 1 to 100 (default 20). Its response
 contains `records`, `recordCount`, and an exact `truncated` flag. Other modes
@@ -126,7 +138,11 @@ curl -i -X DELETE -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:3000/v1/
 ## Routes
 
 ```text
+GET    /
+GET    /assets/dashboard.css
+GET    /assets/dashboard.js
 GET    /health
+GET    /v1/session
 POST   /v1/files
 GET    /v1/files/{id}
 GET    /v1/files/{id}/schema
@@ -137,7 +153,7 @@ GET/POST/DELETE /mcp
 
 The upload field must be named `file`. Supported filename extensions are `.csv`, `.json`, `.jsonl`, `.ndjson`, `.log`, and `.txt`.
 
-`GET /health` is public. Every other route requires `Authorization: Bearer <service-api-key>`.
+The dashboard and `GET /health` are public. Every data, session, and MCP route requires `Authorization: Bearer <service-api-key>`.
 
 ## Configuration
 
@@ -161,6 +177,62 @@ The upload field must be named `file`. Supported filename extensions are `.csv`,
 | `WORKER_SANDBOX` | `bwrap`; set `disabled` only for isolated local development |
 | `BWRAP_BIN` | `/usr/bin/bwrap` |
 | `MCP_ALLOWED_HOSTS` | `HOST`, `localhost`, `127.0.0.1`, and `[::1]`; comma-separated hostnames |
+| `PRODUCT_TELEMETRY_PATH` | disabled; local JSONL event path when configured |
+| `PRODUCT_TELEMETRY_HASH_KEY` | required with telemetry path; 32–512 byte secret |
+
+## Invite-only deployment operations
+
+Use a single private instance behind a TLS reverse proxy. Keep Bun bound to
+`127.0.0.1`; only the proxy should be internet-facing. Set the public hostname
+in `MCP_ALLOWED_HOSTS`, retain the default Bubblewrap sandbox, and place
+`STORAGE_DIR` and `PRODUCT_TELEMETRY_PATH` on private server storage.
+
+Example environment:
+
+```bash
+export BETA_KEY="$(openssl rand -hex 32)"
+export TELEMETRY_HASH_KEY="$(openssl rand -hex 32)"
+export SCHEMAGREP_API_KEYS="$(jq -nc --arg key "$BETA_KEY" '{"invite-001":$key}')"
+export HOST=127.0.0.1
+export PORT=3000
+export MCP_ALLOWED_HOSTS=beta.example.com
+export STORAGE_DIR=/var/lib/schemagrep-beta/files
+export PRODUCT_TELEMETRY_PATH=/var/lib/schemagrep-beta/product-events.jsonl
+export PRODUCT_TELEMETRY_HASH_KEY="$TELEMETRY_HASH_KEY"
+bun src/server.ts
+```
+
+Create one unique 32-byte-or-longer secret per invitee. Deliver it privately.
+To revoke or rotate access, remove or replace that tenant's entry in
+`SCHEMAGREP_API_KEYS` and restart the service. Do not share one key between
+users: tenant isolation, quotas, and activation measurement depend on unique
+tenant IDs.
+
+Before issuing invites:
+
+1. Terminate TLS at the reverse proxy and reject plaintext public traffic.
+2. Confirm `GET /health` through the public hostname.
+3. Upload, schema-read, query, and delete one fixture through the dashboard and
+   the public `/mcp` endpoint.
+4. Confirm an invalid key and cross-tenant file ID both receive the same
+   non-enumerating failure.
+5. Confirm the raw upload disappears after encoding and the retained artifact
+   disappears after explicit deletion and after `FILE_TTL_SECONDS`.
+6. Keep host/container CPU, memory, and disk limits around the Bun process in
+   addition to Bubblewrap.
+
+Product telemetry is opt-in and local to the service. It records only day,
+HMAC-pseudonymous tenant, action, outcome, HTTP status class, latency bucket,
+and query mode. It never records filenames, paths, schemas, records, query
+values, file IDs, IP addresses, or model prompts. Inspect aggregate demand with:
+
+```bash
+bun run telemetry:report /var/lib/schemagrep-beta/product-events.jsonl
+```
+
+For this beta, the meaningful activation signals are successful uploads,
+schema/MCP/query use, and `repeatUploadTenants`. A second real dataset from the
+same invitee is stronger evidence than account creation or a page view.
 
 The byte fields returned in metadata are diagnostic measurements, not compression guarantees.
 

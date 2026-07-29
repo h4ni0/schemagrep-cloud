@@ -7,11 +7,34 @@ import type { FileService } from "./files/types";
 import { ApiKeyAuthenticator } from "./security/auth";
 import { FixedWindowRateLimiter } from "./security/rate-limit";
 import { registerMcpRoutes } from "./mcp/routes";
+import { registerDashboardRoutes } from "./web/routes";
+import {
+  ProductTelemetry,
+  type ProductTelemetryInput,
+} from "./telemetry/product";
 
 export interface BuildAppOptions {
   logger?: boolean;
   config?: ServiceConfig;
   fileService?: FileService;
+  productTelemetry?: ProductTelemetry;
+}
+
+function productAction(method: string, route: string): ProductTelemetryInput["action"] | undefined {
+  if (method === "GET" && route === "/v1/session") return "session";
+  if (method === "POST" && route === "/v1/files") return "upload";
+  if (method === "GET" && route === "/v1/files/:id") return "metadata";
+  if (method === "GET" && route === "/v1/files/:id/schema") return "schema";
+  if (method === "POST" && route === "/v1/files/:id/query") return "query";
+  if (method === "DELETE" && route === "/v1/files/:id") return "delete";
+  return undefined;
+}
+
+function statusClass(statusCode: number): ProductTelemetryInput["status"] {
+  if (statusCode < 300) return "2xx";
+  if (statusCode < 400) return "3xx";
+  if (statusCode < 500) return "4xx";
+  return "5xx";
 }
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
@@ -19,12 +42,27 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const fileService = options.fileService ?? createFileService(config);
   const app = Fastify({ logger: options.logger ?? false });
 
+  const productTelemetry = options.productTelemetry
+    ?? (config.productTelemetryPath !== undefined && config.productTelemetryHashKey !== undefined
+      ? new ProductTelemetry(
+        config.productTelemetryPath,
+        config.productTelemetryHashKey,
+        (error) => app.log.error({ err: error }, "Product telemetry write failed"),
+      )
+      : undefined);
   const authenticator = config.authDisabled
     ? undefined
     : new ApiKeyAuthenticator(config.apiCredentials);
   const rateLimiter = new FixedWindowRateLimiter(config.rateLimitMax, config.rateLimitWindowMs);
+  const publicRoutes = new Set([
+    "/",
+    "/health",
+    "/assets/dashboard.css",
+    "/assets/dashboard.js",
+  ]);
   app.decorateRequest("tenantId", "");
 
+  app.register(registerDashboardRoutes);
   app.get("/health", async () => ({
     service: "schemagrep-cloud",
     status: "ok",
@@ -40,7 +78,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     throwFileSizeLimit: true,
   });
   app.addHook("onRequest", (request, reply, done) => {
-    if (request.routeOptions.url === "/health") {
+    if (publicRoutes.has(request.routeOptions.url ?? "")) {
       done();
       return;
     }
@@ -74,12 +112,33 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     request.tenantId = tenantId;
     done();
   });
+  app.addHook("onResponse", (request, reply, done) => {
+    const action = productAction(request.method, request.routeOptions.url ?? "");
+    if (action !== undefined && request.tenantId.length > 0) {
+      productTelemetry?.record({
+        tenantId: request.tenantId,
+        action,
+        outcome: reply.statusCode < 400 ? "ok" : "error",
+        status: statusClass(reply.statusCode),
+        durationMs: reply.elapsedTime,
+      });
+    }
+    done();
+  });
+  app.get("/v1/session", async (_request, reply) => reply
+    .header("cache-control", "no-store")
+    .send({ authenticated: true }));
+
   app.register(registerFileRoutes, { fileService });
   app.register(registerMcpRoutes, {
     fileService,
     allowedHostnames: config.mcpAllowedHostnames,
+    ...(productTelemetry === undefined ? {} : { productTelemetry }),
   });
-  app.addHook("onClose", async () => fileService.close());
+  app.addHook("onClose", async () => {
+    await productTelemetry?.flush();
+    await fileService.close();
+  });
 
   return app;
 }

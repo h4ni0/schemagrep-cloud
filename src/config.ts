@@ -32,6 +32,8 @@ export interface ServiceConfig {
   workerSandbox: WorkerSandboxMode;
   bubblewrapBinary: string;
   mcpAllowedHostnames: readonly string[];
+  productTelemetryPath?: string;
+  productTelemetryHashKey?: string;
 }
 
 function parseInteger(
@@ -87,6 +89,26 @@ function parseMcpAllowedHostnames(value: string | undefined, serviceHost: string
   return hostnames;
 }
 
+function parseProductTelemetry(env: NodeJS.ProcessEnv): {
+  productTelemetryPath?: string;
+  productTelemetryHashKey?: string;
+} {
+  const path = env.PRODUCT_TELEMETRY_PATH;
+  const hashKey = env.PRODUCT_TELEMETRY_HASH_KEY;
+  if (path === undefined && hashKey === undefined) return {};
+  if (path === undefined || path.length === 0 || path.length > 4096) {
+    throw new Error("PRODUCT_TELEMETRY_PATH is required and must contain 1 to 4096 characters");
+  }
+  if (
+    hashKey === undefined ||
+    Buffer.byteLength(hashKey, "utf8") < 32 ||
+    Buffer.byteLength(hashKey, "utf8") > 512
+  ) {
+    throw new Error("PRODUCT_TELEMETRY_HASH_KEY is required and must contain 32 to 512 UTF-8 bytes");
+  }
+  return { productTelemetryPath: path, productTelemetryHashKey: hashKey };
+}
+
 function parseApiCredentials(value: string | undefined, authDisabled: boolean): ApiCredentialConfig[] {
   if (authDisabled && value === undefined) return [];
   if (value === undefined) {
@@ -139,6 +161,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   const authDisabled = parseBoolean("AUTH_DISABLED", env.AUTH_DISABLED, false);
   const apiCredentials = parseApiCredentials(env.SCHEMAGREP_API_KEYS, authDisabled);
   const host = env.HOST ?? "127.0.0.1";
+  const productTelemetry = parseProductTelemetry(env);
   const maxUploadBytes = parseInteger(
     "MAX_UPLOAD_BYTES",
     env.MAX_UPLOAD_BYTES,
@@ -204,5 +227,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     workerSandbox: parseSandboxMode(env.WORKER_SANDBOX),
     bubblewrapBinary: env.BWRAP_BIN ?? "/usr/bin/bwrap",
     mcpAllowedHostnames: parseMcpAllowedHostnames(env.MCP_ALLOWED_HOSTS, host),
+    ...productTelemetry,
   };
 }

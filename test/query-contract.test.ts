@@ -40,6 +40,29 @@ describe("structured query contract", () => {
     ]);
   });
 
+  test("normalizes numeric and null exact values from agent transports", () => {
+    const numeric = parseStructuredQueryRequest({
+      mode: "count",
+      target: { key: "status" },
+      filters: [],
+      value: 404,
+    });
+    const nullFilter = parseStructuredQueryRequest({
+      mode: "count",
+      target: null,
+      filters: [{ field: { key: "latency" }, op: "eq", value: null }],
+    });
+
+    expect(numeric.value).toBe("404");
+    expect(buildSchemagrepQueryArgs(numeric)).toEqual([
+      "--count", "404", "--key", "status",
+    ]);
+    expect(nullFilter.filters[0]?.value).toBe("null");
+    expect(buildSchemagrepQueryArgs(nullFilter)).toEqual([
+      "--count", "--where", "key=latency:eq:null",
+    ]);
+  });
+
   test("detects one additional grep record without returning it", () => {
     const query = {
       mode: "grep",
