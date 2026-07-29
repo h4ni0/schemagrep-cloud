@@ -2,7 +2,7 @@
 
 Ephemeral HTTP API around [schemagrep](https://github.com/hshei/schemagrep). It accepts CSV, JSON, JSONL, and log files, retains the encoded artifact and schema for a short TTL, executes bounded structured queries, and deletes the raw upload immediately after processing.
 
-Natural-language model calls are not implemented yet. A service API key protects the current upload/schema/query API; this is separate from the model-provider key that `/ask` will eventually use.
+Hosted model calls are not implemented. Customer-owned models connect through the authenticated MCP endpoint and pay their own model provider; schemagrep-cloud never receives a model-provider credential.
 
 ## Prerequisites
 
@@ -83,6 +83,40 @@ two-number array.
 contains `records`, `recordCount`, and an exact `truncated` flag. Other modes
 return their schemagrep result in `answer`.
 
+## Connect a customer-owned model through MCP
+
+Configure a remote Streamable HTTP MCP server in the model client:
+
+```json
+{
+  "mcpServers": {
+    "schemagrep": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer <service-api-key>"
+      }
+    }
+  }
+}
+```
+
+Client configuration field names vary, but the transport URL and bearer header
+are the same. The endpoint supports the current 2026 Streamable HTTP protocol
+and the stateless 2025 fallback.
+
+The server exposes two read-only tools:
+
+| Tool | Purpose |
+|---|---|
+| `schemagrep_get_schema` | Read a tenant-owned file's schema and query primer |
+| `schemagrep_query` | Execute the same validated, bounded contract as the REST query endpoint |
+
+Upload remains a REST operation: upload the file, give its `file_...` ID to the
+model, and ask the question. The tool instructions tell the model to read the
+schema first and never infer a total from limited grep evidence. The customer's
+model account pays for inference; schemagrep-cloud pays no model-provider cost.
+
 Delete the retained artifact:
 
 ```bash
@@ -98,11 +132,12 @@ GET    /v1/files/{id}
 GET    /v1/files/{id}/schema
 POST   /v1/files/{id}/query
 DELETE /v1/files/{id}
+GET/POST/DELETE /mcp
 ```
 
 The upload field must be named `file`. Supported filename extensions are `.csv`, `.json`, `.jsonl`, `.ndjson`, `.log`, and `.txt`.
 
-`GET /health` is public. Every `/v1` route requires `Authorization: Bearer <service-api-key>`.
+`GET /health` is public. Every other route requires `Authorization: Bearer <service-api-key>`.
 
 ## Configuration
 
@@ -125,6 +160,7 @@ The upload field must be named `file`. Supported filename extensions are `.csv`,
 | `MAX_TENANT_STORAGE_BYTES` | `536870912` retained artifact + schema bytes |
 | `WORKER_SANDBOX` | `bwrap`; set `disabled` only for isolated local development |
 | `BWRAP_BIN` | `/usr/bin/bwrap` |
+| `MCP_ALLOWED_HOSTS` | `HOST`, `localhost`, `127.0.0.1`, and `[::1]`; comma-separated hostnames |
 
 The byte fields returned in metadata are diagnostic measurements, not compression guarantees.
 
@@ -132,7 +168,7 @@ The byte fields returned in metadata are diagnostic measurements, not compressio
 
 The current API:
 
-- authenticates every `/v1` request with a hashed bearer-key comparison;
+- authenticates every REST and MCP request with a hashed bearer-key comparison;
 - scopes file reads, queries, and deletion to the tenant that uploaded the file;
 - applies bounded in-memory rate limits per tenant and per unauthenticated IP;
 - caps each tenant's retained artifact and schema bytes, releasing quota on deletion or expiry;
@@ -142,6 +178,7 @@ The current API:
 - generates storage paths from random server-side IDs, never client filenames or URL parameters;
 - invokes schemagrep with fixed arguments and `shell: false`;
 - accepts only a closed structured-query grammar, translates it to fixed argument arrays, and bounds grep evidence to 100 records;
+- isolates MCP tools by the authenticated tenant and validates MCP Host and Origin headers against `MCP_ALLOWED_HOSTS`;
 - runs schemagrep under Bubblewrap with a private network namespace, cleared environment, read-only engine/input/system mounts, no capabilities, and a temporary writable `/tmp`;
 - bounds process time, generated artifact size, schema size, query output, and captured stderr;
 - deletes the raw upload after processing and deletes retained artifacts on request or TTL expiry.

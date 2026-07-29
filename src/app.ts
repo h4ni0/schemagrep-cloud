@@ -6,6 +6,7 @@ import { createFileService } from "./files/service";
 import type { FileService } from "./files/types";
 import { ApiKeyAuthenticator } from "./security/auth";
 import { FixedWindowRateLimiter } from "./security/rate-limit";
+import { registerMcpRoutes } from "./mcp/routes";
 
 export interface BuildAppOptions {
   logger?: boolean;
@@ -74,6 +75,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     done();
   });
   app.register(registerFileRoutes, { fileService });
+  app.register(registerMcpRoutes, {
+    fileService,
+    allowedHostnames: config.mcpAllowedHostnames,
+  });
   app.addHook("onClose", async () => fileService.close());
 
   return app;

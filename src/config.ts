@@ -31,6 +31,7 @@ export interface ServiceConfig {
   maxTenantStorageBytes: number;
   workerSandbox: WorkerSandboxMode;
   bubblewrapBinary: string;
+  mcpAllowedHostnames: readonly string[];
 }
 
 function parseInteger(
@@ -61,6 +62,29 @@ function parseSandboxMode(value: string | undefined): WorkerSandboxMode {
   if (value === undefined || value === "bwrap") return "bwrap";
   if (value === "disabled") return "disabled";
   throw new Error(`WORKER_SANDBOX must be bwrap or disabled; received ${value}`);
+}
+
+function parseMcpAllowedHostnames(value: string | undefined, serviceHost: string): string[] {
+  const candidates =
+    value === undefined
+      ? [serviceHost, "localhost", "127.0.0.1", "[::1]"]
+      : value.split(",").map((hostname) => hostname.trim());
+  const hostnames = [...new Set(candidates.map((hostname) => hostname.toLowerCase()))];
+  const validHostname = /^(?:\[[0-9a-f:]+\]|[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)$/u;
+  if (
+    hostnames.length === 0 ||
+    hostnames.length > 20 ||
+    hostnames.some(
+      (hostname) =>
+        hostname.length === 0 ||
+        hostname.length > 253 ||
+        !validHostname.test(hostname) ||
+        hostname.includes(".."),
+    )
+  ) {
+    throw new Error("MCP_ALLOWED_HOSTS must contain 1 to 20 comma-separated hostnames");
+  }
+  return hostnames;
 }
 
 function parseApiCredentials(value: string | undefined, authDisabled: boolean): ApiCredentialConfig[] {
@@ -114,6 +138,7 @@ function parseApiCredentials(value: string | undefined, authDisabled: boolean): 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
   const authDisabled = parseBoolean("AUTH_DISABLED", env.AUTH_DISABLED, false);
   const apiCredentials = parseApiCredentials(env.SCHEMAGREP_API_KEYS, authDisabled);
+  const host = env.HOST ?? "127.0.0.1";
   const maxUploadBytes = parseInteger(
     "MAX_UPLOAD_BYTES",
     env.MAX_UPLOAD_BYTES,
@@ -123,7 +148,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   );
 
   return {
-    host: env.HOST ?? "127.0.0.1",
+    host,
     port: parseInteger("PORT", env.PORT, 3000, 1, 65_535),
     schemagrepBinary:
       env.SCHEMAGREP_BIN ??
@@ -178,5 +203,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     ),
     workerSandbox: parseSandboxMode(env.WORKER_SANDBOX),
     bubblewrapBinary: env.BWRAP_BIN ?? "/usr/bin/bwrap",
+    mcpAllowedHostnames: parseMcpAllowedHostnames(env.MCP_ALLOWED_HOSTS, host),
   };
 }

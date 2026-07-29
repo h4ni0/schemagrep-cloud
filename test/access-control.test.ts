@@ -29,6 +29,7 @@ const CONFIG: ServiceConfig = {
   rateLimitWindowMs: 60_000,
   maxTenantStorageBytes: 4096,
   workerSandbox: "disabled",
+  mcpAllowedHostnames: ["localhost", "127.0.0.1"],
   bubblewrapBinary: "/usr/bin/bwrap",
 };
 
@@ -233,5 +234,20 @@ describe("API key configuration", () => {
           '{"alpha":"same-secret-0123456789abcdef012345","beta":"same-secret-0123456789abcdef012345"}',
       }),
     ).toThrow("must use a unique API key");
+  });
+
+  test("normalizes MCP Host allowlists and rejects URL-shaped entries", () => {
+    expect(
+      loadConfig({
+        AUTH_DISABLED: "true",
+        MCP_ALLOWED_HOSTS: "API.EXAMPLE.COM,localhost,api.example.com",
+      }).mcpAllowedHostnames,
+    ).toEqual(["api.example.com", "localhost"]);
+    expect(() =>
+      loadConfig({
+        AUTH_DISABLED: "true",
+        MCP_ALLOWED_HOSTS: "https://api.example.com",
+      }),
+    ).toThrow("comma-separated hostnames");
   });
 });

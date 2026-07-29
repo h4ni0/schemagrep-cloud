@@ -38,6 +38,7 @@ const CONFIG: ServiceConfig = {
   rateLimitWindowMs: 60_000,
   maxTenantStorageBytes: 4096,
   workerSandbox: "disabled",
+  mcpAllowedHostnames: ["localhost", "127.0.0.1"],
   bubblewrapBinary: "/usr/bin/bwrap",
 };
 

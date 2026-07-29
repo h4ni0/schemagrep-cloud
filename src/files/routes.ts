@@ -10,6 +10,7 @@ import {
 } from "./errors";
 import type { FileService } from "./types";
 import { parseStructuredQueryRequest } from "../query/contract";
+import { FILE_ID_PATTERN } from "./id";
 
 interface FileRouteOptions {
   fileService: FileService;
@@ -19,7 +20,6 @@ interface FileParams {
   id: string;
 }
 
-const FILE_ID_PATTERN = /^file_[0-9a-f]{32}$/;
 
 function sendFileNotFound(reply: FastifyReply): FastifyReply {
   return reply.code(404).send({

@@ -1,0 +1,51 @@
+import type { FastifyInstance } from "fastify";
+import type { AuthInfo } from "@modelcontextprotocol/server";
+import {
+  hostHeaderValidation,
+  originValidation,
+  toNodeHandler,
+} from "@modelcontextprotocol/node";
+import type { NodeIncomingMessageLike } from "@modelcontextprotocol/node";
+import type { FileService } from "../files/types";
+import { createSchemagrepMcpHandler } from "./server";
+
+interface McpRouteOptions {
+  fileService: FileService;
+  allowedHostnames: readonly string[];
+}
+
+export async function registerMcpRoutes(
+  app: FastifyInstance,
+  options: McpRouteOptions,
+): Promise<void> {
+  const reportError = (error: Error) => app.log.error({ err: error }, "MCP request failed");
+  const handler = createSchemagrepMcpHandler(options.fileService, reportError);
+  const nodeHandler = toNodeHandler(handler, { onerror: reportError });
+  const validateHost = hostHeaderValidation([...options.allowedHostnames]);
+  const validateOrigin = originValidation([...options.allowedHostnames]);
+
+  app.route({
+    method: ["GET", "POST", "DELETE"],
+    url: "/mcp",
+    handler: async (request, reply) => {
+      reply.hijack();
+      if (!validateHost(request.raw, reply.raw) || !validateOrigin(request.raw, reply.raw)) return;
+
+      const auth: AuthInfo = {
+        token: "[validated-and-redacted]",
+        clientId: request.tenantId,
+        scopes: ["schemagrep:read"],
+      };
+      const nodeRequest: NodeIncomingMessageLike = {
+        method: request.method,
+        url: request.raw.url ?? request.url,
+        headers: request.raw.headers,
+        auth,
+        [Symbol.asyncIterator]: () => request.raw[Symbol.asyncIterator](),
+      };
+      await nodeHandler(nodeRequest, reply.raw, request.body);
+    },
+  });
+
+  app.addHook("onClose", async () => handler.close());
+}
