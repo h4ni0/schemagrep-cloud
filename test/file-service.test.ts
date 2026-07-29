@@ -17,6 +17,7 @@ class FakeProcessor implements SchemagrepProcessor {
   encodeCalls = 0;
   schemaCalls = 0;
   lastQueryArgs: readonly string[] | undefined;
+  schemaInput: string | undefined;
   async encode(sourcePath: string, outputPath: string): Promise<number> {
     this.encodeCalls += 1;
     const source = await readFile(sourcePath);
@@ -25,8 +26,9 @@ class FakeProcessor implements SchemagrepProcessor {
     return artifact.byteLength;
   }
 
-  async schema(_sourcePath: string, outputPath: string): Promise<number> {
+  async schema(artifactPath: string, outputPath: string): Promise<number> {
     this.schemaCalls += 1;
+    this.schemaInput = await readFile(artifactPath, "utf8");
     const schema = "[schema]\n";
     await writeFile(outputPath, schema, { flag: "wx", mode: 0o600 });
     return Buffer.byteLength(schema);
@@ -79,6 +81,7 @@ describe("EphemeralFileService", () => {
     expect(record.sourceBytes).toBe(9);
     expect(record.schemaBytes).toBe(9);
     expect(await service.readSchema(record.id, OWNER_ID)).toBe("[schema]\n");
+    expect(runner.schemaInput).toBe('encoded:{"id":1}\n');
     const query: StructuredQueryRequest = {
       mode: "count",
       target: { key: "id" },

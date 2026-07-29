@@ -147,8 +147,8 @@ export class EphemeralFileService implements FileService {
       if (limiter.bytesWritten === 0) throw new EmptyUploadError();
 
       const artifactBytes = await this.options.runner.encode(sourcePath, artifactPath);
-      const schemaBytes = await this.options.runner.schema(sourcePath, schemaPath);
       await rm(sourcePath, { force: true });
+      const schemaBytes = await this.options.runner.schema(artifactPath, schemaPath);
       const retainedBytes = artifactBytes + schemaBytes;
       const tenantUsage = this.tenantStorageBytes.get(ownerId) ?? 0;
       if (tenantUsage + retainedBytes > this.options.maxTenantStorageBytes) {

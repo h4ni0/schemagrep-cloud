@@ -51,7 +51,7 @@ class BufferCollector extends Writable {
 
 export interface SchemagrepProcessor {
   encode(sourcePath: string, outputPath: string): Promise<number>;
-  schema(sourcePath: string, outputPath: string): Promise<number>;
+  schema(artifactPath: string, outputPath: string): Promise<number>;
   query(artifactPath: string, args: readonly string[]): Promise<string>;
 }
 
@@ -80,8 +80,14 @@ export class SchemagrepRunner implements SchemagrepProcessor {
     return this.runToFile("encode", sourcePath, outputPath, this.options.maxArtifactBytes);
   }
 
-  schema(sourcePath: string, outputPath: string): Promise<number> {
-    return this.runToFile("schema", sourcePath, outputPath, this.options.maxSchemaBytes);
+  schema(artifactPath: string, outputPath: string): Promise<number> {
+    return this.runToFile(
+      "schema",
+      artifactPath,
+      outputPath,
+      this.options.maxSchemaBytes,
+      ["--encoded"],
+    );
   }
 
   async query(artifactPath: string, args: readonly string[]): Promise<string> {
@@ -96,14 +102,14 @@ export class SchemagrepRunner implements SchemagrepProcessor {
 
   private buildInvocation(
     action: "encode" | "schema" | "query",
-    sourcePath: string,
+    inputPath: string,
     extraArgs: readonly string[] = [],
   ): ProcessInvocation {
     if (this.options.sandbox.mode === "disabled") {
-      return { executable: this.options.binaryPath, args: [action, sourcePath, ...extraArgs] };
+      return { executable: this.options.binaryPath, args: [action, inputPath, ...extraArgs] };
     }
 
-    const sandboxSource = `/input/source${extname(sourcePath)}`;
+    const sandboxInput = `/input/data${extname(inputPath)}`;
     const args = [
       ...bubblewrapIsolationArgs(),
       "--dir",
@@ -116,8 +122,8 @@ export class SchemagrepRunner implements SchemagrepProcessor {
       this.options.binaryPath,
       "/engine/schemagrep",
       "--ro-bind",
-      sourcePath,
-      sandboxSource,
+      inputPath,
+      sandboxInput,
       "--tmpfs",
       "/tmp",
       "--dir",
@@ -137,7 +143,7 @@ export class SchemagrepRunner implements SchemagrepProcessor {
       "--",
       "/engine/schemagrep",
       action,
-      sandboxSource,
+      sandboxInput,
       ...extraArgs,
     );
     return { executable: this.options.sandbox.bubblewrapBinary, args };
@@ -145,12 +151,13 @@ export class SchemagrepRunner implements SchemagrepProcessor {
 
   private runToFile(
     action: "encode" | "schema",
-    sourcePath: string,
+    inputPath: string,
     outputPath: string,
     maxBytes: number,
+    extraArgs: readonly string[] = [],
   ): Promise<number> {
     return this.runInvocation(
-      this.buildInvocation(action, sourcePath),
+      this.buildInvocation(action, inputPath, extraArgs),
       maxBytes,
       createWriteStream(outputPath, { flags: "wx", mode: 0o600 }),
     );
