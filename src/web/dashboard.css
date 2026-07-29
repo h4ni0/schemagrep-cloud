@@ -33,7 +33,7 @@ body {
   background-size: auto, 34px 34px, 34px 34px, auto;
 }
 
-button, input { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .58; }
 
@@ -175,19 +175,29 @@ label {
   gap: 10px;
 }
 
-input[type="password"] {
+input[type="password"],
+input[type="text"],
+select,
+textarea {
+  width: 100%;
   min-width: 0;
-  flex: 1;
-  height: 48px;
   border: 1px solid var(--line-bright);
   border-radius: 10px;
-  padding: 0 14px;
+  padding: 12px 14px;
   color: var(--text);
   background: #091311;
   outline: none;
 }
-
+input[type="password"] {
+  flex: 1;
+  height: 48px;
+}
+textarea { resize: vertical; line-height: 1.5; }
+select { min-height: 48px; }
 input[type="password"]:focus,
+input[type="text"]:focus,
+select:focus,
+textarea:focus,
 .drop-zone:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(124, 242, 189, .12);
@@ -309,6 +319,36 @@ dd { margin: 6px 0 0; color: var(--text); font-weight: 700; overflow-wrap: anywh
 .prompt-preview q { color: var(--text); }
 .dataset-actions { justify-content: flex-start; }
 
+.feedback-panel {
+  margin-top: 20px;
+  padding: 30px;
+}
+.feedback-panel > p { color: var(--muted); line-height: 1.55; }
+.feedback-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.feedback-panel textarea,
+.feedback-panel .feedback-grid { margin-bottom: 16px; }
+.optional { color: #72847f; font-weight: 500; }
+.consent-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 3px 0 18px;
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.45;
+}
+.consent-row input {
+  width: 17px;
+  height: 17px;
+  margin: 2px 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
 footer {
   padding: 56px 0 36px;
   color: #72847f;
@@ -327,6 +367,7 @@ footer {
   .workspace-grid { gap: 14px; }
   .upload-panel, .setup-panel, .dataset-panel { padding: 23px; }
   .dataset-facts { grid-template-columns: 1fr; }
+  .feedback-grid { grid-template-columns: 1fr; }
   .input-action, .copy-row, .dataset-actions { align-items: stretch; flex-direction: column; }
   .copy-row code { min-height: 48px; }
 }

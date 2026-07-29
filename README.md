@@ -148,12 +148,13 @@ GET    /v1/files/{id}
 GET    /v1/files/{id}/schema
 POST   /v1/files/{id}/query
 DELETE /v1/files/{id}
+POST   /v1/feedback
 GET/POST/DELETE /mcp
 ```
 
 The upload field must be named `file`. Supported filename extensions are `.csv`, `.json`, `.jsonl`, `.ndjson`, `.log`, and `.txt`.
 
-The dashboard and `GET /health` are public. Every data, session, and MCP route requires `Authorization: Bearer <service-api-key>`.
+The dashboard and `GET /health` are public. Every data, session, feedback, and MCP route requires `Authorization: Bearer <service-api-key>`.
 
 ## Configuration
 
@@ -179,13 +180,15 @@ The dashboard and `GET /health` are public. Every data, session, and MCP route r
 | `MCP_ALLOWED_HOSTS` | `HOST`, `localhost`, `127.0.0.1`, and `[::1]`; comma-separated hostnames |
 | `PRODUCT_TELEMETRY_PATH` | disabled; local JSONL event path when configured |
 | `PRODUCT_TELEMETRY_HASH_KEY` | required with telemetry path; 32–512 byte secret |
+| `FEEDBACK_PATH` | disabled; local JSONL path for explicitly consented feedback |
+| `FEEDBACK_RETENTION_DAYS` | `30` when feedback is enabled; range 1–365 |
 
 ## Invite-only deployment operations
 
 Use a single private instance behind a TLS reverse proxy. Keep Bun bound to
 `127.0.0.1`; only the proxy should be internet-facing. Set the public hostname
 in `MCP_ALLOWED_HOSTS`, retain the default Bubblewrap sandbox, and place
-`STORAGE_DIR` and `PRODUCT_TELEMETRY_PATH` on private server storage.
+`STORAGE_DIR`, `PRODUCT_TELEMETRY_PATH`, and `FEEDBACK_PATH` on private server storage.
 
 Example environment:
 
@@ -199,6 +202,8 @@ export MCP_ALLOWED_HOSTS=beta.example.com
 export STORAGE_DIR=/var/lib/schemagrep-beta/files
 export PRODUCT_TELEMETRY_PATH=/var/lib/schemagrep-beta/product-events.jsonl
 export PRODUCT_TELEMETRY_HASH_KEY="$TELEMETRY_HASH_KEY"
+export FEEDBACK_PATH=/var/lib/schemagrep-beta/feedback.jsonl
+export FEEDBACK_RETENTION_DAYS=30
 bun src/server.ts
 ```
 
@@ -230,6 +235,17 @@ values, file IDs, IP addresses, or model prompts. Inspect aggregate demand with:
 bun run telemetry:report /var/lib/schemagrep-beta/product-events.jsonl
 ```
 
+The dashboard's feedback form is separate and explicitly opt-in. It requires a
+checked consent control before accepting the AI client, natural-language
+question, outcome, and optional expected answer or notes. It never attaches a
+tenant, file ID, filename, schema, source record, or structured query. Active
+entries expire after `FEEDBACK_RETENTION_DAYS`; the next submission removes
+expired entries from the local file. Inspect the active consented entries with:
+
+```bash
+bun run feedback:report /var/lib/schemagrep-beta/feedback.jsonl
+```
+
 For this beta, the meaningful activation signals are successful uploads,
 schema/MCP/query use, and `repeatUploadTenants`. A second real dataset from the
 same invitee is stronger evidence than account creation or a page view.
@@ -253,6 +269,7 @@ The current API:
 - isolates MCP tools by the authenticated tenant and validates MCP Host and Origin headers against `MCP_ALLOWED_HOSTS`;
 - runs schemagrep under Bubblewrap with a private network namespace, cleared environment, read-only engine/input/system mounts, no capabilities, and a temporary writable `/tmp`;
 - bounds process time, generated artifact size, schema size, query output, and captured stderr;
+- accepts natural-language feedback only through the authenticated dashboard form after explicit consent, stores no dataset or tenant identifier with it, and removes expired entries;
 - deletes the raw upload after processing and deletes retained artifacts on request or TTL expiry.
 
 Rate limits and storage quotas are per service process; a multi-replica deployment will need shared accounting. Bubblewrap isolates network and filesystem access, but production deployment should still add container/cgroup CPU and memory ceilings around the service.

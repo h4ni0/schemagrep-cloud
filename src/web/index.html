@@ -109,6 +109,42 @@
         </div>
         <p id="dataset-status" class="status" role="status" aria-live="polite"></p>
       </section>
+
+      <section class="panel feedback-panel" aria-labelledby="feedback-title">
+        <p class="step-label">Help shape the beta</p>
+        <h3 id="feedback-title">Tell us what happened</h3>
+        <p>Share one question you tried and whether it worked. This form never attaches your file, schema, dataset ID, or query records.</p>
+        <form id="feedback-form" autocomplete="off">
+          <div class="feedback-grid">
+            <div>
+              <label for="feedback-client">AI client</label>
+              <input id="feedback-client" name="client" type="text" maxlength="100" required placeholder="Claude Desktop, Codex, Cursor…">
+            </div>
+            <div>
+              <label for="feedback-outcome">Outcome</label>
+              <select id="feedback-outcome" name="outcome" required>
+                <option value="correct">Correct answer</option>
+                <option value="incorrect">Incorrect answer</option>
+                <option value="unsupported">Question was unsupported</option>
+                <option value="confusing">Workflow was confusing</option>
+                <option value="connection_failure">Could not connect</option>
+              </select>
+            </div>
+          </div>
+          <label for="feedback-question">Exact question you asked</label>
+          <textarea id="feedback-question" name="question" maxlength="4000" required rows="3" placeholder="Paste the natural-language question here."></textarea>
+          <label for="feedback-expected">Expected answer <span class="optional">(optional)</span></label>
+          <textarea id="feedback-expected" name="expectedAnswer" maxlength="2000" rows="2"></textarea>
+          <label for="feedback-notes">What happened? <span class="optional">(optional)</span></label>
+          <textarea id="feedback-notes" name="notes" maxlength="4000" rows="3" placeholder="Where did you get stuck, or what should have happened instead?"></textarea>
+          <label class="consent-row" for="feedback-consent">
+            <input id="feedback-consent" name="consent" type="checkbox" required>
+            <span>I consent to schemagrep storing the text above for up to 30 days to improve the beta.</span>
+          </label>
+          <button id="feedback-submit" class="button primary" type="submit">Send feedback</button>
+          <p id="feedback-status" class="status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
     </section>
   </main>
 

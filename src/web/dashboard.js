@@ -34,6 +34,15 @@
   const copyQuestion = element("copy-question");
   const deleteDataset = element("delete-dataset");
   const datasetStatus = element("dataset-status");
+  const feedbackForm = element("feedback-form");
+  const feedbackClient = element("feedback-client");
+  const feedbackOutcome = element("feedback-outcome");
+  const feedbackQuestion = element("feedback-question");
+  const feedbackExpected = element("feedback-expected");
+  const feedbackNotes = element("feedback-notes");
+  const feedbackConsent = element("feedback-consent");
+  const feedbackSubmit = element("feedback-submit");
+  const feedbackStatus = element("feedback-status");
 
   let apiKey = "";
   let currentDataset = null;
@@ -147,6 +156,8 @@
     accessPanel.hidden = false;
     setStatus(uploadStatus, "");
     setStatus(configStatus, "");
+    feedbackForm.reset();
+    setStatus(feedbackStatus, "");
     apiKeyInput.focus();
   });
 
@@ -216,6 +227,43 @@
     if (currentDataset === null) return;
     const question = `Using schemagrep dataset ${currentDataset.id}, answer this question: `;
     void copyText(question, datasetStatus, "Starter question copied.");
+  });
+
+  feedbackForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!feedbackConsent.checked) {
+      setStatus(feedbackStatus, "Consent is required before storing question text.", "error");
+      return;
+    }
+    feedbackSubmit.disabled = true;
+    setStatus(feedbackStatus, "Sending feedback…");
+    const expectedAnswer = feedbackExpected.value.trim();
+    const notes = feedbackNotes.value.trim();
+    const payload = {
+      client: feedbackClient.value.trim(),
+      outcome: feedbackOutcome.value,
+      question: feedbackQuestion.value.trim(),
+      ...(expectedAnswer.length === 0 ? {} : { expectedAnswer }),
+      ...(notes.length === 0 ? {} : { notes }),
+      consentToStoreText: true,
+    };
+    try {
+      const response = await fetch("/v1/feedback", {
+        method: "POST",
+        headers: { ...headers(), "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        setStatus(feedbackStatus, await errorMessage(response), "error");
+        return;
+      }
+      feedbackForm.reset();
+      setStatus(feedbackStatus, "Thank you. Your feedback was saved without file data.", "success");
+    } catch {
+      setStatus(feedbackStatus, "Feedback could not reach the server. Try again.", "error");
+    } finally {
+      feedbackSubmit.disabled = false;
+    }
   });
 
   deleteDataset.addEventListener("click", async () => {

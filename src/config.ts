@@ -34,6 +34,8 @@ export interface ServiceConfig {
   mcpAllowedHostnames: readonly string[];
   productTelemetryPath?: string;
   productTelemetryHashKey?: string;
+  feedbackPath?: string;
+  feedbackRetentionMs?: number;
 }
 
 function parseInteger(
@@ -109,6 +111,28 @@ function parseProductTelemetry(env: NodeJS.ProcessEnv): {
   return { productTelemetryPath: path, productTelemetryHashKey: hashKey };
 }
 
+function parseFeedbackConfig(env: NodeJS.ProcessEnv): {
+  feedbackPath?: string;
+  feedbackRetentionMs?: number;
+} {
+  const path = env.FEEDBACK_PATH;
+  if (path === undefined) {
+    if (env.FEEDBACK_RETENTION_DAYS !== undefined) {
+      throw new Error("FEEDBACK_PATH is required when FEEDBACK_RETENTION_DAYS is configured");
+    }
+    return {};
+  }
+  if (path.length === 0 || path.length > 4096) {
+    throw new Error("FEEDBACK_PATH must contain 1 to 4096 characters");
+  }
+  return {
+    feedbackPath: path,
+    feedbackRetentionMs:
+      parseInteger("FEEDBACK_RETENTION_DAYS", env.FEEDBACK_RETENTION_DAYS, 30, 1, 365)
+      * 24 * 60 * 60 * 1000,
+  };
+}
+
 function parseApiCredentials(value: string | undefined, authDisabled: boolean): ApiCredentialConfig[] {
   if (authDisabled && value === undefined) return [];
   if (value === undefined) {
@@ -162,6 +186,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   const apiCredentials = parseApiCredentials(env.SCHEMAGREP_API_KEYS, authDisabled);
   const host = env.HOST ?? "127.0.0.1";
   const productTelemetry = parseProductTelemetry(env);
+  const feedbackConfig = parseFeedbackConfig(env);
   const maxUploadBytes = parseInteger(
     "MAX_UPLOAD_BYTES",
     env.MAX_UPLOAD_BYTES,
@@ -228,5 +253,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     bubblewrapBinary: env.BWRAP_BIN ?? "/usr/bin/bwrap",
     mcpAllowedHostnames: parseMcpAllowedHostnames(env.MCP_ALLOWED_HOSTS, host),
     ...productTelemetry,
+    ...feedbackConfig,
   };
 }

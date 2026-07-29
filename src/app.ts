@@ -12,12 +12,15 @@ import {
   ProductTelemetry,
   type ProductTelemetryInput,
 } from "./telemetry/product";
+import { registerFeedbackRoutes } from "./feedback/routes";
+import { FeedbackStore } from "./feedback/store";
 
 export interface BuildAppOptions {
   logger?: boolean;
   config?: ServiceConfig;
   fileService?: FileService;
   productTelemetry?: ProductTelemetry;
+  feedbackStore?: FeedbackStore;
 }
 
 function productAction(method: string, route: string): ProductTelemetryInput["action"] | undefined {
@@ -27,6 +30,7 @@ function productAction(method: string, route: string): ProductTelemetryInput["ac
   if (method === "GET" && route === "/v1/files/:id/schema") return "schema";
   if (method === "POST" && route === "/v1/files/:id/query") return "query";
   if (method === "DELETE" && route === "/v1/files/:id") return "delete";
+  if (method === "POST" && route === "/v1/feedback") return "feedback";
   return undefined;
 }
 
@@ -49,6 +53,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         config.productTelemetryHashKey,
         (error) => app.log.error({ err: error }, "Product telemetry write failed"),
       )
+      : undefined);
+  const feedbackStore = options.feedbackStore
+    ?? (config.feedbackPath !== undefined && config.feedbackRetentionMs !== undefined
+      ? new FeedbackStore(config.feedbackPath, config.feedbackRetentionMs)
       : undefined);
   const authenticator = config.authDisabled
     ? undefined
@@ -128,6 +136,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.get("/v1/session", async (_request, reply) => reply
     .header("cache-control", "no-store")
     .send({ authenticated: true }));
+  app.register(registerFeedbackRoutes, {
+    ...(feedbackStore === undefined ? {} : { feedbackStore }),
+  });
 
   app.register(registerFileRoutes, { fileService });
   app.register(registerMcpRoutes, {
@@ -137,6 +148,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
   app.addHook("onClose", async () => {
     await productTelemetry?.flush();
+    await feedbackStore?.flush();
     await fileService.close();
   });
 

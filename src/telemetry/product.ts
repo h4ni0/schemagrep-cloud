@@ -3,7 +3,7 @@ import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 const FORMAT_VERSION = 1;
-const ACTIONS = ["session", "upload", "metadata", "schema", "query", "delete", "mcp"] as const;
+const ACTIONS = ["session", "upload", "metadata", "schema", "query", "delete", "feedback", "mcp"] as const;
 const OUTCOMES = ["ok", "error"] as const;
 const LATENCIES = ["lt10ms", "10to49ms", "50to199ms", "200to999ms", "1splus"] as const;
 

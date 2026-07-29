@@ -9,7 +9,8 @@
     "setup-engine": "make -C vendor/schemagrep",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "telemetry:report": "bun src/telemetry/report.ts"
+    "telemetry:report": "bun src/telemetry/report.ts",
+    "feedback:report": "bun src/feedback/report.ts"
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.0",
