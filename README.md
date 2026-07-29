@@ -1,8 +1,8 @@
 # schemagrep-cloud
 
-Ephemeral HTTP API around [schemagrep](https://github.com/hshei/schemagrep). It accepts CSV, JSON, JSONL, and log files, retains the encoded artifact and schema for a short TTL, and deletes the raw upload immediately after processing.
+Ephemeral HTTP API around [schemagrep](https://github.com/hshei/schemagrep). It accepts CSV, JSON, JSONL, and log files, retains the encoded artifact and schema for a short TTL, executes bounded structured queries, and deletes the raw upload immediately after processing.
 
-Natural-language model calls and structured query routes are not implemented yet. A service API key protects the current upload/schema API; this is separate from the model-provider key that `/ask` will eventually use.
+Natural-language model calls are not implemented yet. A service API key protects the current upload/schema/query API; this is separate from the model-provider key that `/ask` will eventually use.
 
 ## Prerequisites
 
@@ -62,6 +62,27 @@ curl -sS -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:3000/v1/files/$FI
 curl -sS -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:3000/v1/files/$FILE_ID/schema"
 ```
 
+Run a validated query against the retained encoded artifact:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  --data '{"mode":"count","target":{"key":"type"},"value":"push","filters":[]}' \
+  "http://127.0.0.1:3000/v1/files/$FILE_ID/query" | jq
+```
+
+The query contract accepts `rows`, `count`, `grep`, `min`, `max`, `sum`, `avg`,
+`argmax`, `argmin`, `distinct`, and `const`. A target or filter field is
+`{"col":N}` for CSV, `{"slot":N}` for logs, and `{"slot":N}` or `{"key":"name"}`
+for JSON/JSONL. Up to eight filters are combined with AND. `eq` and `ne` take
+string values; `gt`, `ge`, `lt`, and `le` take numbers; `between` takes a
+two-number array.
+
+`grep` always has a bounded `limit` from 1 to 100 (default 20). Its response
+contains `records`, `recordCount`, and an exact `truncated` flag. Other modes
+return their schemagrep result in `answer`.
+
 Delete the retained artifact:
 
 ```bash
@@ -75,6 +96,7 @@ GET    /health
 POST   /v1/files
 GET    /v1/files/{id}
 GET    /v1/files/{id}/schema
+POST   /v1/files/{id}/query
 DELETE /v1/files/{id}
 ```
 
@@ -93,6 +115,7 @@ The upload field must be named `file`. Supported filename extensions are `.csv`,
 | `PROCESS_TIMEOUT_MS` | `30000` |
 | `MAX_SCHEMA_BYTES` | `4194304` |
 | `MAX_ARTIFACT_BYTES` | four times the upload limit, capped at 2 GiB |
+| `MAX_QUERY_OUTPUT_BYTES` | `1048576` |
 | `STORAGE_DIR` | system temporary directory |
 | `SCHEMAGREP_BIN` | bundled engine binary |
 | `SCHEMAGREP_API_KEYS` | required JSON object mapping tenant IDs to 32–512 byte secrets |
@@ -110,7 +133,7 @@ The byte fields returned in metadata are diagnostic measurements, not compressio
 The current API:
 
 - authenticates every `/v1` request with a hashed bearer-key comparison;
-- scopes file reads and deletion to the tenant that uploaded the file;
+- scopes file reads, queries, and deletion to the tenant that uploaded the file;
 - applies bounded in-memory rate limits per tenant and per unauthenticated IP;
 - caps each tenant's retained artifact and schema bytes, releasing quota on deletion or expiry;
 - streams uploads through a fixed byte limit;
@@ -118,8 +141,9 @@ The current API:
 - strips multipart path components before filenames reach storage validation;
 - generates storage paths from random server-side IDs, never client filenames or URL parameters;
 - invokes schemagrep with fixed arguments and `shell: false`;
+- accepts only a closed structured-query grammar, translates it to fixed argument arrays, and bounds grep evidence to 100 records;
 - runs schemagrep under Bubblewrap with a private network namespace, cleared environment, read-only engine/input/system mounts, no capabilities, and a temporary writable `/tmp`;
-- bounds process time, generated artifact size, schema size, and captured stderr;
+- bounds process time, generated artifact size, schema size, query output, and captured stderr;
 - deletes the raw upload after processing and deletes retained artifacts on request or TTL expiry.
 
 Rate limits and storage quotas are per service process; a multi-replica deployment will need shared accounting. Bubblewrap isolates network and filesystem access, but production deployment should still add container/cgroup CPU and memory ceilings around the service.

@@ -2,12 +2,14 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   EmptyUploadError,
   InvalidFilenameError,
+  InvalidQueryError,
   SchemagrepProcessError,
   TenantStorageQuotaError,
   UnsupportedFileTypeError,
   UploadTooLargeError,
 } from "./errors";
 import type { FileService } from "./types";
+import { parseStructuredQueryRequest } from "../query/contract";
 
 interface FileRouteOptions {
   fileService: FileService;
@@ -96,6 +98,38 @@ function sendKnownError(error: unknown, reply: FastifyReply): boolean {
   return false;
 }
 
+function sendQueryError(error: unknown, reply: FastifyReply): boolean {
+  if (error instanceof InvalidQueryError) {
+    void reply.code(400).send({
+      error: { code: "invalid_query", message: error.message },
+    });
+    return true;
+  }
+  if (!(error instanceof SchemagrepProcessError)) return false;
+  if (error.kind === "output_limit") {
+    void reply.code(413).send({
+      error: { code: "query_output_too_large", message: "Query output exceeds the service limit" },
+    });
+    return true;
+  }
+  if (error.kind === "spawn") {
+    void reply.code(503).send({
+      error: { code: "processor_unavailable", message: "Query processor is unavailable" },
+    });
+    return true;
+  }
+  if (error.kind === "timeout") {
+    void reply.code(504).send({
+      error: { code: "query_timeout", message: "Query exceeded its execution timeout" },
+    });
+    return true;
+  }
+  void reply.code(422).send({
+    error: { code: "query_failed", message: "The query could not be executed" },
+  });
+  return true;
+}
+
 export async function registerFileRoutes(
   app: FastifyInstance,
   options: FileRouteOptions,
@@ -143,6 +177,26 @@ export async function registerFileRoutes(
     if (schema === undefined) return sendFileNotFound(reply);
     return reply.type("text/plain; charset=utf-8").send(schema);
   });
+
+  app.post<{ Params: FileParams; Body: unknown }>(
+    "/v1/files/:id/query",
+    async (request, reply) => {
+      if (!FILE_ID_PATTERN.test(request.params.id)) return sendFileNotFound(reply);
+      try {
+        const query = parseStructuredQueryRequest(request.body);
+        const result = await options.fileService.query(
+          request.params.id,
+          request.tenantId,
+          query,
+        );
+        if (result === undefined) return sendFileNotFound(reply);
+        return result;
+      } catch (error) {
+        if (sendQueryError(error, reply)) return reply;
+        throw error;
+      }
+    },
+  );
 
   app.delete<{ Params: FileParams }>("/v1/files/:id", async (request, reply) => {
     if (!FILE_ID_PATTERN.test(request.params.id)) return sendFileNotFound(reply);

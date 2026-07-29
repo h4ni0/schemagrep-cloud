@@ -23,6 +23,7 @@ export interface ServiceConfig {
   maxUploadBytes: number;
   maxArtifactBytes: number;
   maxSchemaBytes: number;
+  maxQueryOutputBytes: number;
   authDisabled: boolean;
   apiCredentials: readonly ApiCredentialConfig[];
   rateLimitMax: number;
@@ -149,6 +150,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
       env.MAX_SCHEMA_BYTES,
       4 * MEBIBYTE,
       1,
+      64 * MEBIBYTE,
+    ),
+    maxQueryOutputBytes: parseInteger(
+      "MAX_QUERY_OUTPUT_BYTES",
+      env.MAX_QUERY_OUTPUT_BYTES,
+      1 * MEBIBYTE,
+      1024,
       64 * MEBIBYTE,
     ),
     authDisabled,

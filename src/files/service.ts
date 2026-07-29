@@ -6,9 +6,15 @@ import { Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ServiceConfig } from "../config";
 import { SchemagrepRunner, type SchemagrepProcessor } from "../schemagrep/runner";
+import type { QueryField, StructuredQueryRequest, StructuredQueryResponse } from "../query/contract";
+import {
+  buildSchemagrepQueryArgs,
+  formatStructuredQueryResponse,
+} from "../query/execution";
 import {
   EmptyUploadError,
   InvalidFilenameError,
+  InvalidQueryError,
   TenantStorageQuotaError,
   UnsupportedFileTypeError,
   UploadTooLargeError,
@@ -29,6 +35,27 @@ const CODECS_BY_EXTENSION: Readonly<Record<string, SupportedCodec>> = {
   ".ndjson": "jsonl",
   ".txt": "log",
 };
+
+function validateQueryCoordinate(field: QueryField, codec: SupportedCodec): void {
+  const supported =
+    (codec === "csv" && "col" in field) ||
+    (codec === "log" && "slot" in field) ||
+    ((codec === "json" || codec === "jsonl") && !("col" in field));
+  if (!supported) {
+    throw new InvalidQueryError(`Field coordinate is not supported for ${codec} files`);
+  }
+}
+
+function validateQueryForCodec(
+  request: StructuredQueryRequest,
+  codec: SupportedCodec,
+): void {
+  if (codec === "csv" && request.template !== undefined) {
+    throw new InvalidQueryError("template is not supported for csv files");
+  }
+  if (request.target !== null) validateQueryCoordinate(request.target, codec);
+  for (const filter of request.filters) validateQueryCoordinate(filter.field, codec);
+}
 
 function validateUploadFilename(filename: string): string {
   const containsUnsafeCharacter = /[\u0000-\u001f\u007f/\\]/u.test(filename);
@@ -168,6 +195,24 @@ export class EphemeralFileService implements FileService {
     return readFile(record.schemaPath, "utf8");
   }
 
+  async query(
+    id: string,
+    ownerId: string,
+    request: StructuredQueryRequest,
+  ): Promise<StructuredQueryResponse | undefined> {
+    await this.expireIfNeeded(id);
+    const record = this.files.get(id);
+    if (record === undefined || record.ownerId !== ownerId) return undefined;
+    validateQueryForCodec(request, record.codec);
+
+    const grepLimit = request.mode === "grep" ? (request.limit ?? 20) + 1 : undefined;
+    const output = await this.options.runner.query(
+      record.artifactPath,
+      buildSchemagrepQueryArgs(request, grepLimit),
+    );
+    return formatStructuredQueryResponse(request, output);
+  }
+
   async delete(id: string, ownerId: string): Promise<boolean> {
     const record = this.files.get(id);
     if (record === undefined || record.ownerId !== ownerId) return false;
@@ -247,6 +292,7 @@ export function createFileService(config: ServiceConfig): EphemeralFileService {
     timeoutMs: config.processTimeoutMs,
     maxArtifactBytes: config.maxArtifactBytes,
     maxSchemaBytes: config.maxSchemaBytes,
+    maxQueryOutputBytes: config.maxQueryOutputBytes,
     sandbox:
       config.workerSandbox === "bwrap"
         ? { mode: "bwrap", bubblewrapBinary: config.bubblewrapBinary }

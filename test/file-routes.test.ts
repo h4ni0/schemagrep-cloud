@@ -8,6 +8,7 @@ import {
   UploadTooLargeError,
 } from "../src/files/errors";
 import type { FileService, PublicFileRecord, UploadSource } from "../src/files/types";
+import type { StructuredQueryRequest, StructuredQueryResponse } from "../src/query/contract";
 
 const RECORD: PublicFileRecord = {
   id: "file_0123456789abcdef0123456789abcdef",
@@ -30,6 +31,7 @@ const CONFIG: ServiceConfig = {
   maxUploadBytes: 1024,
   maxArtifactBytes: 4096,
   maxSchemaBytes: 4096,
+  maxQueryOutputBytes: 4096,
   authDisabled: true,
   apiCredentials: [],
   rateLimitMax: 100,
@@ -67,6 +69,17 @@ class FakeFileService implements FileService {
   async readSchema(id: string, ownerId: string): Promise<string | undefined> {
     this.lastOwnerId = ownerId;
     return id === RECORD.id && !this.deleted ? "[schema]\n" : undefined;
+  }
+
+  async query(
+    id: string,
+    ownerId: string,
+    query: StructuredQueryRequest,
+  ): Promise<StructuredQueryResponse | undefined> {
+    this.lastOwnerId = ownerId;
+    return id === RECORD.id && !this.deleted
+      ? { query, answer: "8", outputBytes: 1 }
+      : undefined;
   }
 
   async delete(id: string, ownerId: string): Promise<boolean> {
@@ -179,6 +192,40 @@ describe("ephemeral file routes", () => {
         message: "Tenant retained-storage quota exceeded",
       },
     });
+  });
+
+  test("executes validated structured queries and rejects unknown fields", async () => {
+    const fileService = new FakeFileService();
+    app = buildApp({ config: CONFIG, fileService });
+    const query = {
+      mode: "count",
+      target: { key: "type" },
+      filters: [],
+      value: "push",
+    };
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/files/${RECORD.id}/query`,
+      headers: { "content-type": "application/json" },
+      payload: query,
+    });
+    const invalid = await app.inject({
+      method: "POST",
+      url: `/v1/files/${RECORD.id}/query`,
+      headers: { "content-type": "application/json" },
+      payload: { ...query, command: "cat /etc/passwd" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      query,
+      answer: "8",
+      outputBytes: 1,
+    });
+    expect(fileService.lastOwnerId).toBe("local-development");
+    expect(invalid.statusCode).toBe(400);
+    expect(JSON.parse(invalid.body).error.code).toBe("invalid_query");
   });
 
   test("serves metadata and schema, then deletes the file", async () => {

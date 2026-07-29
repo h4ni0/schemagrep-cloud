@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app";
 import { loadConfig, type ServiceConfig } from "../src/config";
 import type { FileService, PublicFileRecord, UploadSource } from "../src/files/types";
+import type { StructuredQueryRequest, StructuredQueryResponse } from "../src/query/contract";
 
 const ALPHA_KEY = "alpha-secret-0123456789abcdef0123456789";
 const BETA_KEY = "beta-secret-0123456789abcdef01234567890";
@@ -18,6 +19,7 @@ const CONFIG: ServiceConfig = {
   maxUploadBytes: 1024,
   maxArtifactBytes: 4096,
   maxSchemaBytes: 4096,
+  maxQueryOutputBytes: 4096,
   authDisabled: false,
   apiCredentials: [
     { tenantId: "alpha", secret: ALPHA_KEY },
@@ -64,6 +66,17 @@ class TenantFileService implements FileService {
   async readSchema(id: string, ownerId: string): Promise<string | undefined> {
     const owned = this.files.get(id);
     return owned?.ownerId === ownerId ? "[schema]\n" : undefined;
+  }
+
+  async query(
+    id: string,
+    ownerId: string,
+    query: StructuredQueryRequest,
+  ): Promise<StructuredQueryResponse | undefined> {
+    const owned = this.files.get(id);
+    return owned?.ownerId === ownerId
+      ? { query, answer: "1", outputBytes: 1 }
+      : undefined;
   }
 
   async delete(id: string, ownerId: string): Promise<boolean> {
@@ -139,6 +152,24 @@ describe("API access control", () => {
       url: `/v1/files/${FILE_ID}`,
       headers: { authorization: `Bearer ${BETA_KEY}` },
     });
+    const alphaQuery = await app.inject({
+      method: "POST",
+      url: `/v1/files/${FILE_ID}/query`,
+      headers: {
+        authorization: `Bearer ${ALPHA_KEY}`,
+        "content-type": "application/json",
+      },
+      payload: { mode: "rows", target: null, filters: [] },
+    });
+    const betaQuery = await app.inject({
+      method: "POST",
+      url: `/v1/files/${FILE_ID}/query`,
+      headers: {
+        authorization: `Bearer ${BETA_KEY}`,
+        "content-type": "application/json",
+      },
+      payload: { mode: "rows", target: null, filters: [] },
+    });
     const betaDelete = await app.inject({
       method: "DELETE",
       url: `/v1/files/${FILE_ID}`,
@@ -153,6 +184,8 @@ describe("API access control", () => {
     expect(uploaded.statusCode).toBe(201);
     expect(alphaRead.statusCode).toBe(200);
     expect(betaRead.statusCode).toBe(404);
+    expect(alphaQuery.statusCode).toBe(200);
+    expect(betaQuery.statusCode).toBe(404);
     expect(betaDelete.statusCode).toBe(404);
     expect(alphaDelete.statusCode).toBe(204);
   });

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import { Transform, type TransformCallback } from "node:stream";
+import { Transform, Writable, type TransformCallback } from "node:stream";
 import { extname } from "node:path";
 import { SchemagrepProcessError } from "../files/errors";
 import { bubblewrapIsolationArgs } from "./sandbox";
@@ -32,9 +32,27 @@ class OutputLimitTransform extends Transform {
   }
 }
 
+class BufferCollector extends Writable {
+  private readonly chunks: Buffer[] = [];
+
+  override _write(
+    chunk: Buffer,
+    encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
+    callback();
+  }
+
+  override toString(): string {
+    return Buffer.concat(this.chunks).toString("utf8");
+  }
+}
+
 export interface SchemagrepProcessor {
   encode(sourcePath: string, outputPath: string): Promise<number>;
   schema(sourcePath: string, outputPath: string): Promise<number>;
+  query(artifactPath: string, args: readonly string[]): Promise<string>;
 }
 
 export type WorkerSandbox =
@@ -51,6 +69,7 @@ export interface SchemagrepRunnerOptions {
   timeoutMs: number;
   maxArtifactBytes: number;
   maxSchemaBytes: number;
+  maxQueryOutputBytes: number;
   sandbox: WorkerSandbox;
 }
 
@@ -65,9 +84,23 @@ export class SchemagrepRunner implements SchemagrepProcessor {
     return this.runToFile("schema", sourcePath, outputPath, this.options.maxSchemaBytes);
   }
 
-  private buildInvocation(action: "encode" | "schema", sourcePath: string): ProcessInvocation {
+  async query(artifactPath: string, args: readonly string[]): Promise<string> {
+    const output = new BufferCollector();
+    await this.runInvocation(
+      this.buildInvocation("query", artifactPath, args),
+      this.options.maxQueryOutputBytes,
+      output,
+    );
+    return output.toString();
+  }
+
+  private buildInvocation(
+    action: "encode" | "schema" | "query",
+    sourcePath: string,
+    extraArgs: readonly string[] = [],
+  ): ProcessInvocation {
     if (this.options.sandbox.mode === "disabled") {
-      return { executable: this.options.binaryPath, args: [action, sourcePath] };
+      return { executable: this.options.binaryPath, args: [action, sourcePath, ...extraArgs] };
     }
 
     const sandboxSource = `/input/source${extname(sourcePath)}`;
@@ -105,18 +138,29 @@ export class SchemagrepRunner implements SchemagrepProcessor {
       "/engine/schemagrep",
       action,
       sandboxSource,
+      ...extraArgs,
     );
     return { executable: this.options.sandbox.bubblewrapBinary, args };
   }
 
-  private async runToFile(
+  private runToFile(
     action: "encode" | "schema",
     sourcePath: string,
     outputPath: string,
     maxBytes: number,
   ): Promise<number> {
+    return this.runInvocation(
+      this.buildInvocation(action, sourcePath),
+      maxBytes,
+      createWriteStream(outputPath, { flags: "wx", mode: 0o600 }),
+    );
+  }
 
-    const invocation = this.buildInvocation(action, sourcePath);
+  private async runInvocation(
+    invocation: ProcessInvocation,
+    maxBytes: number,
+    destination: Writable,
+  ): Promise<number> {
     const child = spawn(invocation.executable, invocation.args, {
       cwd: undefined,
       env: {
@@ -144,11 +188,7 @@ export class SchemagrepRunner implements SchemagrepProcessor {
       child.once("close", (code, signal) => resolve({ code, signal }));
     });
 
-    const output = pipeline(
-      child.stdout,
-      limiter,
-      createWriteStream(outputPath, { flags: "wx", mode: 0o600 }),
-    );
+    const output = pipeline(child.stdout, limiter, destination);
     output.catch(() => child.kill("SIGKILL"));
 
     const timeout = setTimeout(() => {

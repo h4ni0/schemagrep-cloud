@@ -1,4 +1,5 @@
 import type { Readable } from "node:stream";
+import type { StructuredQueryRequest, StructuredQueryResponse } from "../query/contract";
 
 export type SupportedCodec = "csv" | "json" | "jsonl" | "log";
 
@@ -31,6 +32,11 @@ export interface FileService {
   ingest(source: UploadSource, ownerId: string): Promise<PublicFileRecord>;
   get(id: string, ownerId: string): Promise<PublicFileRecord | undefined>;
   readSchema(id: string, ownerId: string): Promise<string | undefined>;
+  query(
+    id: string,
+    ownerId: string,
+    request: StructuredQueryRequest,
+  ): Promise<StructuredQueryResponse | undefined>;
   delete(id: string, ownerId: string): Promise<boolean>;
   close(): Promise<void>;
 }

@@ -11,10 +11,12 @@ import {
 } from "../src/files/errors";
 import { EphemeralFileService } from "../src/files/service";
 import type { SchemagrepProcessor } from "../src/schemagrep/runner";
+import type { StructuredQueryRequest } from "../src/query/contract";
 
 class FakeProcessor implements SchemagrepProcessor {
   encodeCalls = 0;
   schemaCalls = 0;
+  lastQueryArgs: readonly string[] | undefined;
   async encode(sourcePath: string, outputPath: string): Promise<number> {
     this.encodeCalls += 1;
     const source = await readFile(sourcePath);
@@ -28,6 +30,11 @@ class FakeProcessor implements SchemagrepProcessor {
     const schema = "[schema]\n";
     await writeFile(outputPath, schema, { flag: "wx", mode: 0o600 });
     return Buffer.byteLength(schema);
+  }
+
+  async query(_artifactPath: string, args: readonly string[]): Promise<string> {
+    this.lastQueryArgs = args;
+    return "5\n";
   }
 }
 
@@ -49,12 +56,13 @@ describe("EphemeralFileService", () => {
     await mkdir(abandonedDirectory);
     await writeFile(join(abandonedDirectory, "raw-upload.jsonl"), "must be deleted");
     let now = Date.parse("2026-07-29T00:00:00.000Z");
+    const runner = new FakeProcessor();
     const service = new EphemeralFileService({
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
       maxTenantStorageBytes: 4096,
-      runner: new FakeProcessor(),
+      runner,
       now: () => now,
     });
 
@@ -71,6 +79,19 @@ describe("EphemeralFileService", () => {
     expect(record.sourceBytes).toBe(9);
     expect(record.schemaBytes).toBe(9);
     expect(await service.readSchema(record.id, OWNER_ID)).toBe("[schema]\n");
+    const query: StructuredQueryRequest = {
+      mode: "count",
+      target: { key: "id" },
+      filters: [],
+      value: "1",
+    };
+    expect(await service.query(record.id, OWNER_ID, query)).toEqual({
+      query,
+      answer: "5",
+      outputBytes: 1,
+    });
+    expect(runner.lastQueryArgs).toEqual(["--count", "1", "--key", "id"]);
+    expect(await service.query(record.id, "tenant-b", query)).toBeUndefined();
     expect(await service.get(record.id, "tenant-b")).toBeUndefined();
     expect(await service.readSchema(record.id, "tenant-b")).toBeUndefined();
     expect(await service.delete(record.id, "tenant-b")).toBe(false);

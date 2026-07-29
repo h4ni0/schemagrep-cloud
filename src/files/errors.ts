@@ -12,6 +12,13 @@ export class InvalidFilenameError extends Error {
   }
 }
 
+export class InvalidQueryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidQueryError";
+  }
+}
+
 export class TenantStorageQuotaError extends Error {
   constructor() {
     super("Tenant retained-storage quota exceeded");
