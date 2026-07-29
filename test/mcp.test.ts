@@ -168,7 +168,7 @@ describe("schemagrep MCP endpoint", () => {
       },
     });
     expect(numericCount.structuredContent).toMatchObject({
-      result: { query: { value: "404" } },
+      result: { query: { value: 404 } },
     });
     expect(malformedProjection.isError).toBe(true);
     expect(hidden.isError).toBe(true);

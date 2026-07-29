@@ -25,7 +25,7 @@ export interface StructuredQueryRequest {
   mode: QueryMode;
   target: QueryField | null;
   filters: QueryFilter[];
-  value?: string;
+  value?: string | number;
   limit?: number;
   template?: number;
 }
@@ -133,9 +133,13 @@ function parseString(value: unknown, context: string, rejectLeadingFlag: boolean
   return value;
 }
 
-function parseExactValue(value: unknown, context: string, rejectLeadingFlag: boolean): string {
+function parseExactValue(
+  value: unknown,
+  context: string,
+  rejectLeadingFlag: boolean,
+): string | number {
   if (typeof value === "string") return parseString(value, context, rejectLeadingFlag);
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "number" && Number.isFinite(value)) return value;
   if (value === null) return "null";
   invalid(`${context} must be a string, finite number, or null`);
 }
@@ -147,10 +151,11 @@ function parseFilter(value: unknown, index: number): QueryFilter {
   const field = parseCoordinate(value.field, `${context}.field`);
 
   if (value.op === "eq" || value.op === "ne") {
+    const exactValue = parseExactValue(value.value, `${context}.value`, false);
     return {
       field,
       op: value.op,
-      value: parseExactValue(value.value, `${context}.value`, false),
+      value: String(exactValue),
     };
   }
   if (typeof value.op === "string" && NUMERIC_OPERATORS.has(value.op)) {
@@ -194,7 +199,7 @@ export function parseStructuredQueryRequest(input: unknown): StructuredQueryRequ
     invalid(`${mode} does not support filters`);
   }
 
-  let value: string | undefined;
+  let value: string | number | undefined;
   if (input.value !== undefined) {
     if (mode !== "count" && mode !== "grep") invalid("value only composes with count or grep");
     value = parseExactValue(input.value, "value", true);

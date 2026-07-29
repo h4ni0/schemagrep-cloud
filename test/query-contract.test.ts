@@ -40,7 +40,7 @@ describe("structured query contract", () => {
     ]);
   });
 
-  test("normalizes numeric and null exact values from agent transports", () => {
+  test("routes numeric exact values through numeric predicate semantics", () => {
     const numeric = parseStructuredQueryRequest({
       mode: "count",
       target: { key: "status" },
@@ -53,9 +53,9 @@ describe("structured query contract", () => {
       filters: [{ field: { key: "latency" }, op: "eq", value: null }],
     });
 
-    expect(numeric.value).toBe("404");
+    expect(numeric.value).toBe(404);
     expect(buildSchemagrepQueryArgs(numeric)).toEqual([
-      "--count", "404", "--key", "status",
+      "--count", "--where", "key=status:eq:404",
     ]);
     expect(nullFilter.filters[0]?.value).toBe("null");
     expect(buildSchemagrepQueryArgs(nullFilter)).toEqual([

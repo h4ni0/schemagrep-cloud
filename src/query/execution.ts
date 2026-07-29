@@ -27,13 +27,20 @@ export function buildSchemagrepQueryArgs(
   grepLimit: number | undefined = request.limit,
 ): string[] {
   const args = [`--${request.mode}`];
-  if (request.value !== undefined) args.push(request.value);
-  if (request.target !== null) args.push(...coordinateArgument(request.target));
+  const numericExact = typeof request.value === "number";
+  if (typeof request.value === "string") args.push(request.value);
+  if (request.target !== null && !numericExact) args.push(...coordinateArgument(request.target));
   if (request.template !== undefined) args.push("--template", String(request.template));
   for (const filter of request.filters) {
     args.push(
       "--where",
       `${filterCoordinate(filter.field)}:${filter.op}:${filterValue(filter)}`,
+    );
+  }
+  if (numericExact && request.target !== null) {
+    args.push(
+      "--where",
+      `${filterCoordinate(request.target)}:eq:${request.value}`,
     );
   }
   if (request.mode === "grep" && grepLimit !== undefined) {
