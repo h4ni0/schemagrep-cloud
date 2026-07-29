@@ -24,6 +24,7 @@
   const copyConfig = element("copy-config");
   const configStatus = element("config-status");
   const datasetPanel = element("dataset-panel");
+  const feedbackPanel = element("feedback-panel");
   const datasetName = element("dataset-name");
   const datasetSize = element("dataset-size");
   const datasetExpiry = element("dataset-expiry");
@@ -105,15 +106,17 @@
     questionTemplate.textContent = `${question}[your question]`;
     setStatus(datasetStatus, "Raw upload deleted. The query artifact is ready.", "success");
     datasetPanel.hidden = false;
+    feedbackPanel.hidden = false;
     updateExpiry();
     if (expiryTimer !== null) window.clearInterval(expiryTimer);
     expiryTimer = window.setInterval(updateExpiry, 30_000);
     datasetPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const resetDataset = () => {
+  const resetDataset = (hideFeedback = false) => {
     currentDataset = null;
     datasetPanel.hidden = true;
+    if (hideFeedback) feedbackPanel.hidden = true;
     setStatus(datasetStatus, "");
     if (expiryTimer !== null) window.clearInterval(expiryTimer);
     expiryTimer = null;
@@ -149,7 +152,7 @@
 
   forgetKey.addEventListener("click", () => {
     apiKey = "";
-    resetDataset();
+    resetDataset(true);
     uploadForm.reset();
     fileLabel.textContent = "Choose a file";
     workspace.hidden = true;

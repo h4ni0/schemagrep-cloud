@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Upload a data file and query it through schemagrep's hosted MCP service.">
   <title>schemagrep private beta</title>
-  <link rel="stylesheet" href="/assets/dashboard.css">
-  <script src="/assets/dashboard.js" defer></script>
+  <link rel="stylesheet" href="/assets/dashboard.css?v=2">
+  <script src="/assets/dashboard.js?v=2" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -110,10 +110,15 @@
         <p id="dataset-status" class="status" role="status" aria-live="polite"></p>
       </section>
 
-      <section class="panel feedback-panel" aria-labelledby="feedback-title">
-        <p class="step-label">Help shape the beta</p>
-        <h3 id="feedback-title">Tell us what happened</h3>
-        <p>Share one question you tried and whether it worked. This form never attaches your file, schema, dataset ID, or query records.</p>
+      <section id="feedback-panel" class="panel feedback-panel" aria-labelledby="feedback-title" hidden>
+        <div class="dataset-heading">
+          <div>
+            <p class="step-label">Optional feedback</p>
+            <h3 id="feedback-title">Share your test result</h3>
+          </div>
+          <span class="codec-badge">30-day retention</span>
+        </div>
+        <p class="feedback-intro">One question is enough. Only the text you enter below is stored—never your file, schema, dataset ID, or query records.</p>
         <form id="feedback-form" autocomplete="off">
           <div class="feedback-grid">
             <div>
@@ -132,16 +137,24 @@
             </div>
           </div>
           <label for="feedback-question">Exact question you asked</label>
-          <textarea id="feedback-question" name="question" maxlength="4000" required rows="3" placeholder="Paste the natural-language question here."></textarea>
-          <label for="feedback-expected">Expected answer <span class="optional">(optional)</span></label>
-          <textarea id="feedback-expected" name="expectedAnswer" maxlength="2000" rows="2"></textarea>
-          <label for="feedback-notes">What happened? <span class="optional">(optional)</span></label>
-          <textarea id="feedback-notes" name="notes" maxlength="4000" rows="3" placeholder="Where did you get stuck, or what should have happened instead?"></textarea>
-          <label class="consent-row" for="feedback-consent">
-            <input id="feedback-consent" name="consent" type="checkbox" required>
-            <span>I consent to schemagrep storing the text above for up to 30 days to improve the beta.</span>
-          </label>
-          <button id="feedback-submit" class="button primary" type="submit">Send feedback</button>
+          <textarea id="feedback-question" name="question" maxlength="4000" required rows="2" placeholder="Paste the natural-language question here."></textarea>
+          <div class="feedback-detail-grid">
+            <div>
+              <label for="feedback-expected">Expected answer <span class="optional">(optional)</span></label>
+              <input id="feedback-expected" name="expectedAnswer" type="text" maxlength="2000" placeholder="What should the answer have been?">
+            </div>
+            <div>
+              <label for="feedback-notes">What happened? <span class="optional">(optional)</span></label>
+              <textarea id="feedback-notes" name="notes" maxlength="4000" rows="2" placeholder="Where did it get stuck?"></textarea>
+            </div>
+          </div>
+          <div class="feedback-actions">
+            <label class="consent-row" for="feedback-consent">
+              <input id="feedback-consent" name="consent" type="checkbox" required>
+              <span>I consent to storing this text for up to 30 days to improve the beta.</span>
+            </label>
+            <button id="feedback-submit" class="button primary" type="submit">Send feedback</button>
+          </div>
           <p id="feedback-status" class="status" role="status" aria-live="polite"></p>
         </form>
       </section>

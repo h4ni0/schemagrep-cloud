@@ -27,12 +27,12 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
     .send(dashboardHtml));
 
   app.get("/assets/dashboard.css", async (_request, reply) => secureBrowserResponse(reply)
-    .header("cache-control", "public, max-age=3600")
+    .header("cache-control", "no-store")
     .type("text/css; charset=utf-8")
     .send(dashboardCss));
 
   app.get("/assets/dashboard.js", async (_request, reply) => secureBrowserResponse(reply)
-    .header("cache-control", "public, max-age=3600")
+    .header("cache-control", "no-store")
     .type("text/javascript; charset=utf-8")
     .send(dashboardJavaScript));
 }
