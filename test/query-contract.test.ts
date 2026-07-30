@@ -85,6 +85,7 @@ describe("structured query contract", () => {
       { mode: "rows", target: null, filters: [], command: "cat" },
       { mode: "count", target: { key: "type" }, filters: [], value: "--rows" },
       { mode: "count", target: { key: "--rows" }, filters: [], value: "push" },
+      { mode: "count", target: { key: "payload.size" }, filters: [], value: 10 },
       { mode: "count", target: null, filters: [] },
       { mode: "grep", target: null, filters: [{ field: { key: "id" }, op: "eq", value: "1" }], limit: 101 },
       { mode: "rows", target: null, filters: [{ field: { key: "id" }, op: "eq", value: "1" }] },
@@ -103,5 +104,13 @@ describe("structured query contract", () => {
     for (const request of invalidRequests) {
       expect(() => parseStructuredQueryRequest(request)).toThrow(InvalidQueryError);
     }
+  });
+
+  test("explains that JSON coordinates use leaf keys instead of dotted paths", () => {
+    expect(() => parseStructuredQueryRequest({
+      mode: "count",
+      target: null,
+      filters: [{ field: { key: "payload.size" }, op: "ge", value: 10 }],
+    })).toThrow("filters[0].field.key must be a leaf key name, not a dotted path; use size for payload.size");
   });
 });

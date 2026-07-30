@@ -98,6 +98,9 @@ function parseCoordinate(value: unknown, context: string): QueryField {
 
   const [kind, coordinate] = entries[0]!;
   if (kind === "key") {
+    if (typeof coordinate === "string" && coordinate.includes(".")) {
+      invalid(`${context}.key must be a leaf key name, not a dotted path; use size for payload.size`);
+    }
     if (
       typeof coordinate !== "string" ||
       Buffer.byteLength(coordinate, "utf8") === 0 ||

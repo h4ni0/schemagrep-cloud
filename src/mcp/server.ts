@@ -8,6 +8,7 @@ import { QUERY_MODES, parseStructuredQueryRequest } from "../query/contract";
 const jsonLeafKeySchema = z.string()
   .min(1)
   .max(256)
+  .regex(/^[^.]+$/, "Use a leaf key name, not a dotted path; use size for payload.size")
   .describe("JSON/JSONL leaf key name, not a dotted path or JSONPath; use size for payload.size.");
 
 const queryFieldSchema = z.union([
