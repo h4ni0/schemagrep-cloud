@@ -21,6 +21,13 @@ export interface StoredFileRecord extends PublicFileRecord {
   artifactPath: string;
   schemaPath: string;
 }
+export interface TenantFileUsage {
+  activeFiles: number;
+  sourceBytes: number;
+  retainedBytes: number;
+  maxRetainedBytes: number;
+}
+
 
 export interface UploadSource {
   filename: string;
@@ -30,6 +37,8 @@ export interface UploadSource {
 
 export interface FileService {
   ingest(source: UploadSource, ownerId: string): Promise<PublicFileRecord>;
+  list(ownerId: string): Promise<PublicFileRecord[]>;
+  usage(ownerId: string): Promise<TenantFileUsage>;
   get(id: string, ownerId: string): Promise<PublicFileRecord | undefined>;
   readSchema(id: string, ownerId: string): Promise<string | undefined>;
   query(

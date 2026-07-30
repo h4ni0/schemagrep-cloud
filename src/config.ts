@@ -32,6 +32,13 @@ export interface ServiceConfig {
   workerSandbox: WorkerSandboxMode;
   bubblewrapBinary: string;
   mcpAllowedHostnames: readonly string[];
+  trustedProxyClientIpHeader?: string;
+  publicBaseUrl?: string;
+  oauthCookieKey?: string;
+  productTelemetryPath?: string;
+  productTelemetryHashKey?: string;
+  feedbackPath?: string;
+  feedbackRetentionMs?: number;
 }
 
 function parseInteger(
@@ -87,6 +94,93 @@ function parseMcpAllowedHostnames(value: string | undefined, serviceHost: string
   return hostnames;
 }
 
+function parseTrustedProxyClientIpHeader(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const header = value.trim().toLowerCase();
+  if (header.length === 0 || header.length > 128 || !/^[!#$%&'*+\-.^_`|~0-9a-z]+$/u.test(header)) {
+    throw new Error("TRUSTED_PROXY_CLIENT_IP_HEADER must be one valid HTTP header name");
+  }
+  return header;
+}
+
+function parseOAuthConfig(env: NodeJS.ProcessEnv): {
+  publicBaseUrl?: string;
+  oauthCookieKey?: string;
+} {
+  const rawBaseUrl = env.PUBLIC_BASE_URL;
+  const cookieKey = env.OAUTH_COOKIE_KEY;
+  if (rawBaseUrl === undefined && cookieKey === undefined) return {};
+  if (rawBaseUrl === undefined || cookieKey === undefined) {
+    throw new Error("PUBLIC_BASE_URL and OAUTH_COOKIE_KEY must be configured together");
+  }
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(rawBaseUrl);
+  } catch {
+    throw new Error("PUBLIC_BASE_URL must be an absolute URL");
+  }
+  if (
+    (baseUrl.protocol !== "https:" &&
+      !(baseUrl.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(baseUrl.hostname))) ||
+    baseUrl.username.length > 0 ||
+    baseUrl.password.length > 0 ||
+    baseUrl.search.length > 0 ||
+    baseUrl.hash.length > 0
+  ) {
+    throw new Error("PUBLIC_BASE_URL must be HTTPS, except for loopback development");
+  }
+  if (baseUrl.pathname !== "/") {
+    throw new Error("PUBLIC_BASE_URL must not contain a path");
+  }
+  if (Buffer.byteLength(cookieKey, "utf8") < 32 || Buffer.byteLength(cookieKey, "utf8") > 512) {
+    throw new Error("OAUTH_COOKIE_KEY must contain 32 to 512 UTF-8 bytes");
+  }
+  baseUrl.pathname = baseUrl.pathname.replace(/\/+$/u, "");
+  return { publicBaseUrl: baseUrl.href.replace(/\/$/u, ""), oauthCookieKey: cookieKey };
+}
+
+function parseProductTelemetry(env: NodeJS.ProcessEnv): {
+  productTelemetryPath?: string;
+  productTelemetryHashKey?: string;
+} {
+  const path = env.PRODUCT_TELEMETRY_PATH;
+  const hashKey = env.PRODUCT_TELEMETRY_HASH_KEY;
+  if (path === undefined && hashKey === undefined) return {};
+  if (path === undefined || path.length === 0 || path.length > 4096) {
+    throw new Error("PRODUCT_TELEMETRY_PATH is required and must contain 1 to 4096 characters");
+  }
+  if (
+    hashKey === undefined ||
+    Buffer.byteLength(hashKey, "utf8") < 32 ||
+    Buffer.byteLength(hashKey, "utf8") > 512
+  ) {
+    throw new Error("PRODUCT_TELEMETRY_HASH_KEY is required and must contain 32 to 512 UTF-8 bytes");
+  }
+  return { productTelemetryPath: path, productTelemetryHashKey: hashKey };
+}
+
+function parseFeedbackConfig(env: NodeJS.ProcessEnv): {
+  feedbackPath?: string;
+  feedbackRetentionMs?: number;
+} {
+  const path = env.FEEDBACK_PATH;
+  if (path === undefined) {
+    if (env.FEEDBACK_RETENTION_DAYS !== undefined) {
+      throw new Error("FEEDBACK_PATH is required when FEEDBACK_RETENTION_DAYS is configured");
+    }
+    return {};
+  }
+  if (path.length === 0 || path.length > 4096) {
+    throw new Error("FEEDBACK_PATH must contain 1 to 4096 characters");
+  }
+  return {
+    feedbackPath: path,
+    feedbackRetentionMs:
+      parseInteger("FEEDBACK_RETENTION_DAYS", env.FEEDBACK_RETENTION_DAYS, 30, 1, 365)
+      * 24 * 60 * 60 * 1000,
+  };
+}
+
 function parseApiCredentials(value: string | undefined, authDisabled: boolean): ApiCredentialConfig[] {
   if (authDisabled && value === undefined) return [];
   if (value === undefined) {
@@ -139,6 +233,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   const authDisabled = parseBoolean("AUTH_DISABLED", env.AUTH_DISABLED, false);
   const apiCredentials = parseApiCredentials(env.SCHEMAGREP_API_KEYS, authDisabled);
   const host = env.HOST ?? "127.0.0.1";
+  const productTelemetry = parseProductTelemetry(env);
+  const feedbackConfig = parseFeedbackConfig(env);
+  const oauthConfig = parseOAuthConfig(env);
+  const trustedProxyClientIpHeader = parseTrustedProxyClientIpHeader(
+    env.TRUSTED_PROXY_CLIENT_IP_HEADER,
+  );
   const maxUploadBytes = parseInteger(
     "MAX_UPLOAD_BYTES",
     env.MAX_UPLOAD_BYTES,
@@ -204,5 +304,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     workerSandbox: parseSandboxMode(env.WORKER_SANDBOX),
     bubblewrapBinary: env.BWRAP_BIN ?? "/usr/bin/bwrap",
     mcpAllowedHostnames: parseMcpAllowedHostnames(env.MCP_ALLOWED_HOSTS, host),
+    ...(trustedProxyClientIpHeader === undefined ? {} : { trustedProxyClientIpHeader }),
+    ...oauthConfig,
+    ...productTelemetry,
+    ...feedbackConfig,
   };
 }

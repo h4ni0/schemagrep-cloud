@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Upload a data file and query it through schemagrep's hosted MCP service.">
+  <title>schemagrep private beta</title>
+  <link rel="stylesheet" href="/assets/dashboard.css?v=2">
+  <script src="/assets/dashboard.js?v=2" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="schemagrep home">
+      <span class="brand-mark" aria-hidden="true">sg</span>
+      <span>schemagrep</span>
+    </a>
+    <span class="beta-badge">Private beta</span>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <p class="eyebrow">Schema first. Query only what matters.</p>
+      <h1 id="hero-title">Ask questions of data without feeding the whole file to the model.</h1>
+      <p class="hero-copy">Upload CSV, JSON, JSONL, or logs. schemagrep creates a compact schema and an ephemeral query artifact for your existing AI client.</p>
+      <div class="privacy-strip" aria-label="Data handling summary">
+        <span><strong>Raw upload</strong> deleted after encoding</span>
+        <span><strong>Artifact</strong> expires automatically</span>
+        <span><strong>Model</strong> stays in your account</span>
+      </div>
+    </section>
+
+    <section id="access-panel" class="panel access-panel" aria-labelledby="access-title">
+      <div>
+        <p class="step-label">Invite access</p>
+        <h2 id="access-title">Unlock your workspace</h2>
+        <p>Paste the beta key from your invitation. It stays in this tab's memory and is never saved by the dashboard.</p>
+      </div>
+      <form id="access-form" class="access-form">
+        <label for="api-key">Beta API key</label>
+        <div class="input-action">
+          <input id="api-key" name="api-key" type="password" autocomplete="off" spellcheck="false" required placeholder="sg_beta_…">
+          <button id="access-submit" class="button primary" type="submit">Unlock</button>
+        </div>
+        <p id="access-status" class="status" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="workspace" class="workspace" aria-label="Dataset workspace" hidden>
+      <div class="workspace-header">
+        <div>
+          <p class="step-label">Workspace</p>
+          <h2>Your ephemeral datasets</h2>
+        </div>
+        <button id="forget-key" class="button quiet" type="button">Forget key</button>
+      </div>
+
+      <div class="workspace-grid">
+        <section class="panel upload-panel" aria-labelledby="upload-title">
+          <p class="step-label">Step 1</p>
+          <h3 id="upload-title">Upload a file</h3>
+          <p>Up to 25 MiB. Supported: CSV, JSON, JSONL, NDJSON, log, and text.</p>
+          <form id="upload-form">
+            <label class="drop-zone" for="dataset-file">
+              <input id="dataset-file" name="file" type="file" accept=".csv,.json,.jsonl,.ndjson,.log,.txt" required>
+              <span class="drop-icon" aria-hidden="true">↑</span>
+              <strong id="file-label">Choose a file</strong>
+              <span>or drop it here</span>
+            </label>
+            <button id="upload-submit" class="button primary wide" type="submit">Encode dataset</button>
+            <p id="upload-status" class="status" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+
+        <section class="panel setup-panel" aria-labelledby="setup-title">
+          <p class="step-label">Step 2</p>
+          <h3 id="setup-title">Connect your AI client</h3>
+          <p>Your client will open browser authorization automatically. Do not paste your beta key into model settings.</p>
+          <div class="endpoint-box">
+            <span>MCP endpoint</span>
+            <code id="mcp-endpoint"></code>
+          </div>
+          <button id="copy-config" class="button secondary wide" type="button">Copy MCP configuration</button>
+          <p id="config-status" class="status" role="status" aria-live="polite"></p>
+        </section>
+      </div>
+      <section id="usage-panel" class="panel usage-panel" aria-labelledby="usage-title">
+        <div class="dataset-heading">
+          <div>
+            <p class="step-label">Workspace usage</p>
+            <h3 id="usage-title">What this beta has processed</h3>
+          </div>
+          <span id="usage-storage" class="codec-badge">Loading</span>
+        </div>
+        <div class="usage-stats" aria-live="polite">
+          <div><span id="usage-active-files">—</span><small>Active files</small></div>
+          <div><span id="usage-source-bytes">—</span><small>Source data encoded</small></div>
+          <div><span id="usage-uploads">—</span><small>Successful uploads</small></div>
+          <div><span id="usage-queries">—</span><small>REST queries</small></div>
+          <div><span id="usage-mcp">—</span><small>MCP requests</small></div>
+        </div>
+        <progress id="usage-progress" value="0" max="1" aria-label="Retained storage usage"></progress>
+        <div class="active-files-heading">
+          <strong>Active datasets</strong>
+          <span>Newest first</span>
+        </div>
+        <ul id="active-files" class="active-files"></ul>
+        <p id="usage-status" class="status" role="status" aria-live="polite"></p>
+      </section>
+
+
+      <section id="dataset-panel" class="panel dataset-panel" aria-labelledby="dataset-title" hidden>
+        <div class="dataset-heading">
+          <div>
+            <p class="step-label">Ready</p>
+            <h3 id="dataset-title">Dataset prepared</h3>
+          </div>
+          <span id="dataset-codec" class="codec-badge"></span>
+        </div>
+        <dl class="dataset-facts">
+          <div><dt>File</dt><dd id="dataset-name"></dd></div>
+          <div><dt>Source size</dt><dd id="dataset-size"></dd></div>
+          <div><dt>Expires</dt><dd id="dataset-expiry"></dd></div>
+        </dl>
+        <label for="dataset-id">Dataset ID</label>
+        <div class="copy-row">
+          <code id="dataset-id"></code>
+          <button id="copy-id" class="button secondary" type="button">Copy ID</button>
+        </div>
+        <p class="prompt-preview">Ask your client: <q id="question-template"></q></p>
+        <div class="dataset-actions">
+          <button id="copy-question" class="button primary" type="button">Copy starter question</button>
+          <button id="delete-dataset" class="button danger" type="button">Delete now</button>
+        </div>
+        <p id="dataset-status" class="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="feedback-panel" class="panel feedback-panel" aria-labelledby="feedback-title" hidden>
+        <div class="dataset-heading">
+          <div>
+            <p class="step-label">Optional feedback</p>
+            <h3 id="feedback-title">Share your test result</h3>
+          </div>
+          <span class="codec-badge">30-day retention</span>
+        </div>
+        <p class="feedback-intro">One question is enough. Only the text you enter below is stored—never your file, schema, dataset ID, or query records.</p>
+        <form id="feedback-form" autocomplete="off">
+          <div class="feedback-grid">
+            <div>
+              <label for="feedback-client">AI client</label>
+              <input id="feedback-client" name="client" type="text" maxlength="100" required placeholder="Claude Desktop, Codex, Cursor…">
+            </div>
+            <div>
+              <label for="feedback-outcome">Outcome</label>
+              <select id="feedback-outcome" name="outcome" required>
+                <option value="correct">Correct answer</option>
+                <option value="incorrect">Incorrect answer</option>
+                <option value="unsupported">Question was unsupported</option>
+                <option value="confusing">Workflow was confusing</option>
+                <option value="connection_failure">Could not connect</option>
+              </select>
+            </div>
+          </div>
+          <label for="feedback-question">Exact question you asked</label>
+          <textarea id="feedback-question" name="question" maxlength="4000" required rows="2" placeholder="Paste the natural-language question here."></textarea>
+          <div class="feedback-detail-grid">
+            <div>
+              <label for="feedback-expected">Expected answer <span class="optional">(optional)</span></label>
+              <input id="feedback-expected" name="expectedAnswer" type="text" maxlength="2000" placeholder="What should the answer have been?">
+            </div>
+            <div>
+              <label for="feedback-notes">What happened? <span class="optional">(optional)</span></label>
+              <textarea id="feedback-notes" name="notes" maxlength="4000" rows="2" placeholder="Where did it get stuck?"></textarea>
+            </div>
+          </div>
+          <div class="feedback-actions">
+            <label class="consent-row" for="feedback-consent">
+              <input id="feedback-consent" name="consent" type="checkbox" required>
+              <span>I consent to storing this text for up to 30 days to improve the beta.</span>
+            </label>
+            <button id="feedback-submit" class="button primary" type="submit">Send feedback</button>
+          </div>
+          <p id="feedback-status" class="status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+    </section>
+  </main>
+
+  <footer>
+    <p>Files are processed for this beta only. No model-provider credentials are sent to schemagrep.</p>
+  </footer>
+</body>
+</html>

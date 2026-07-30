@@ -61,6 +61,16 @@ class FakeFileService implements FileService {
     return { ...RECORD, originalName: source.filename, sourceBytes: this.uploaded.byteLength };
   }
 
+  async list(ownerId: string): Promise<PublicFileRecord[]> {
+    this.lastOwnerId = ownerId;
+    return this.deleted ? [] : [RECORD];
+  }
+
+  async usage(ownerId: string) {
+    this.lastOwnerId = ownerId;
+    return { activeFiles: this.deleted ? 0 : 1, sourceBytes: 8, retainedBytes: 17, maxRetainedBytes: 4096 };
+  }
+
   async get(id: string, ownerId: string): Promise<PublicFileRecord | undefined> {
     this.lastOwnerId = ownerId;
     this.getCalls += 1;
@@ -227,6 +237,29 @@ describe("ephemeral file routes", () => {
     expect(fileService.lastOwnerId).toBe("local-development");
     expect(invalid.statusCode).toBe(400);
     expect(JSON.parse(invalid.body).error.code).toBe("invalid_query");
+  });
+
+  test("lists active files and reports tenant-scoped workspace usage", async () => {
+    const fileService = new FakeFileService();
+    app = buildApp({ config: CONFIG, fileService });
+
+    const listing = await app.inject({ method: "GET", url: "/v1/files" });
+    const usage = await app.inject({ method: "GET", url: "/v1/usage" });
+
+    expect(listing.statusCode).toBe(200);
+    expect(JSON.parse(listing.body)).toEqual({ files: [RECORD] });
+    expect(JSON.parse(usage.body)).toEqual({
+      storage: { activeFiles: 1, sourceBytes: 8, retainedBytes: 17, maxRetainedBytes: 4096 },
+      activity: {
+        events: 0,
+        successfulUploads: 0,
+        queries: 0,
+        schemaReads: 0,
+        mcpRequests: 0,
+        errors: 0,
+      },
+    });
+    expect(fileService.lastOwnerId).toBe("local-development");
   });
 
   test("serves metadata and schema, then deletes the file", async () => {

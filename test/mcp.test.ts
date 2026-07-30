@@ -48,6 +48,19 @@ class McpFileService implements FileService {
     return RECORD;
   }
 
+  async list(ownerId: string): Promise<PublicFileRecord[]> {
+    return ownerId === "alpha" ? [RECORD] : [];
+  }
+
+  async usage(ownerId: string) {
+    return {
+      activeFiles: ownerId === "alpha" ? 1 : 0,
+      sourceBytes: ownerId === "alpha" ? RECORD.sourceBytes : 0,
+      retainedBytes: ownerId === "alpha" ? RECORD.schemaBytes : 0,
+      maxRetainedBytes: 4096,
+    };
+  }
+
   async get(id: string, ownerId: string): Promise<PublicFileRecord | undefined> {
     return id === FILE_ID && ownerId === "alpha" ? RECORD : undefined;
   }
@@ -105,6 +118,10 @@ describe("schemagrep MCP endpoint", () => {
 
     const alpha = await connectClient(endpoint, ALPHA_KEY, "alpha-client");
     const tools = await alpha.listTools();
+    const listing = await alpha.callTool({
+      name: "schemagrep_list_files",
+      arguments: {},
+    });
     const schema = await alpha.callTool({
       name: "schemagrep_get_schema",
       arguments: { fileId: FILE_ID },
@@ -119,6 +136,26 @@ describe("schemagrep MCP endpoint", () => {
         value: "push",
       },
     });
+    const numericCount = await alpha.callTool({
+      name: "schemagrep_query",
+      arguments: {
+        fileId: FILE_ID,
+        mode: "count",
+        target: { key: "status" },
+        filters: [],
+        value: 404,
+      },
+    });
+    const malformedProjection = await alpha.callTool({
+      name: "schemagrep_query",
+      arguments: {
+        fileId: FILE_ID,
+        mode: "grep",
+        target: { key: "status" },
+        filters: [{ field: { key: "status" }, op: "ge", value: 400 }],
+        limit: 3,
+      },
+    });
 
     const beta = await connectClient(endpoint, BETA_KEY, "beta-client");
     const hidden = await beta.callTool({
@@ -127,10 +164,17 @@ describe("schemagrep MCP endpoint", () => {
     });
 
     expect(tools.tools.map((tool) => tool.name)).toEqual([
+      "schemagrep_list_files",
       "schemagrep_get_schema",
       "schemagrep_query",
     ]);
     expect(tools.tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
+    expect(tools.tools.find((tool) => tool.name === "schemagrep_get_schema")?.description).toContain("exactly once");
+    expect(tools.tools.find((tool) => tool.name === "schemagrep_query")?.description).toContain("target MUST be null");
+    expect(tools.tools.find((tool) => tool.name === "schemagrep_query")?.description).toContain(
+      "use key size, not payload.size",
+    );
+    expect(listing.structuredContent).toEqual({ files: [RECORD] });
     expect(schema.structuredContent).toEqual({ fileId: FILE_ID, schema: "[schema]\n" });
     expect(count.structuredContent).toEqual({
       fileId: FILE_ID,
@@ -145,6 +189,10 @@ describe("schemagrep MCP endpoint", () => {
         outputBytes: 1,
       },
     });
+    expect(numericCount.structuredContent).toMatchObject({
+      result: { query: { value: 404 } },
+    });
+    expect(malformedProjection.isError).toBe(true);
     expect(hidden.isError).toBe(true);
   });
 
