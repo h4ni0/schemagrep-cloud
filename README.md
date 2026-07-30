@@ -67,7 +67,7 @@ The normal path opens the browser automatically. `login --no-browser` instead
 prints the authorization URL for a browser on the same computer.
 
 ```bash
-bun run cloud -- login --server https://beta.example.com
+bun run cloud -- login --server https://schemagrep.hani-labs.com
 bun run cloud -- upload ./events.jsonl
 bun run cloud -- files
 bun run cloud -- schema --latest
@@ -232,7 +232,10 @@ proxy to overwrite one dedicated client-IP header, then name that header in
 `TRUSTED_PROXY_CLIENT_IP_HEADER`; never forward a client-supplied value. Set the
 public hostname in `MCP_ALLOWED_HOSTS`, configure `PUBLIC_BASE_URL`, retain the
 default Bubblewrap sandbox, and place `STORAGE_DIR`,
-`PRODUCT_TELEMETRY_PATH`, and `FEEDBACK_PATH` on private server storage.
+`PRODUCT_TELEMETRY_PATH`, and `FEEDBACK_PATH` on private persistent storage.
+`STORAGE_DIR` contains file manifests, encoded artifacts, OAuth clients,
+grants, sessions, tokens, and the OAuth signing key; use mode `0700`, include it
+in backups, and never place it under `/tmp`.
 
 Example environment:
 
@@ -246,7 +249,7 @@ export PORT=3000
 export PUBLIC_BASE_URL=https://beta.example.com
 export MCP_ALLOWED_HOSTS=beta.example.com
 export TRUSTED_PROXY_CLIENT_IP_HEADER=cf-connecting-ip # Cloudflare overwrites this header
-export STORAGE_DIR=/var/lib/schemagrep-beta/files
+export STORAGE_DIR=/var/lib/schemagrep-beta
 export PRODUCT_TELEMETRY_PATH=/var/lib/schemagrep-beta/product-events.jsonl
 export PRODUCT_TELEMETRY_HASH_KEY="$TELEMETRY_HASH_KEY"
 export FEEDBACK_PATH=/var/lib/schemagrep-beta/feedback.jsonl
@@ -270,7 +273,10 @@ Before issuing invites:
    non-enumerating failure.
 5. Confirm the raw upload disappears after encoding and the retained artifact
    disappears after explicit deletion and after `FILE_TTL_SECONDS`.
-6. Keep host/container CPU, memory, and disk limits around the Bun process in
+6. Restart the service and confirm the same active file is listed, its schema
+   and queries still work, an existing access token remains valid, and its
+   refresh token can issue a new access token.
+7. Keep host/container CPU, memory, and disk limits around the Bun process in
    addition to Bubblewrap.
 
 Product telemetry is opt-in and local to the service. It records only day,
@@ -304,7 +310,7 @@ The byte fields returned in metadata are diagnostic measurements, not compressio
 The current API:
 
 - supports MCP OAuth discovery, authorization-code PKCE, dynamic client registration, scoped opaque access tokens, rotating refresh tokens, and browser consent;
-- keeps OAuth grants and tokens process-local, so a restart revokes active OAuth sessions by design for this ephemeral beta;
+- persists OAuth clients, grants, sessions, tokens, and the signing key under `STORAGE_DIR`, so valid OAuth sessions survive a single-node restart;
 - retains hashed static bearer-key comparison for dashboard access, operators, and local clients;
 - never gives the MCP client the invite key; the terminal CLI stores OAuth tokens in the OS credential store;
 - scopes file reads, queries, and deletion to the tenant that uploaded the file and enforces `files:read`, `files:write`, and `files:delete`;
@@ -320,6 +326,7 @@ The current API:
 - runs schemagrep under Bubblewrap with a private network namespace, cleared environment, read-only engine/input/system mounts, no capabilities, and a temporary writable `/tmp`;
 - bounds process time, generated artifact size, schema size, query output, and captured stderr;
 - accepts natural-language feedback only after explicit consent, stores no dataset or tenant identifier with it, and removes expired entries;
+- persists tenant ownership and file metadata beside each encoded artifact, recovers valid files at startup, and removes incomplete or expired entries;
 - deletes the raw upload after processing and deletes retained artifacts on request or TTL expiry.
 
 Rate limits and storage quotas are per service process; a multi-replica deployment will need shared accounting. Bubblewrap isolates network and filesystem access, but production deployment should still add container/cgroup CPU and memory ceilings around the service.

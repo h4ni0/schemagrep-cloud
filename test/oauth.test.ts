@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { FastifyInstance } from "fastify";
@@ -6,7 +9,10 @@ import { buildApp } from "../src/app";
 import type { ServiceConfig } from "../src/config";
 import type { FileService, PublicFileRecord, UploadSource } from "../src/files/types";
 import type { StructuredQueryRequest, StructuredQueryResponse } from "../src/query/contract";
-import { EphemeralOAuthAdapter } from "../src/oauth/provider";
+import {
+  PersistentOAuthAdapter,
+  PersistentOAuthAdapterRepository,
+} from "../src/oauth/adapter";
 
 const INVITE_KEY = "oauth-invite-0123456789abcdef0123456789";
 const FILE: PublicFileRecord = {
@@ -75,19 +81,55 @@ class CookieJar {
 
 let app: FastifyInstance | undefined;
 let client: Client | undefined;
+const temporaryDirectories: string[] = [];
+
+async function createAdapterRepository(): Promise<PersistentOAuthAdapterRepository> {
+  const directory = await mkdtemp(join(tmpdir(), "schemagrep-oauth-adapter-test-"));
+  temporaryDirectories.push(directory);
+  return new PersistentOAuthAdapterRepository(directory);
+}
+
 
 afterEach(async () => {
   await client?.close();
   client = undefined;
   await app?.close();
   app = undefined;
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
-describe("ephemeral OAuth adapter", () => {
+describe("persistent OAuth adapter", () => {
+  test("recovers records from disk through a new repository", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "schemagrep-oauth-adapter-test-"));
+    temporaryDirectories.push(directory);
+    const first = new PersistentOAuthAdapter(
+      "AccessToken",
+      new PersistentOAuthAdapterRepository(directory),
+    );
+    await first.upsert(
+      "token",
+      { clientId: "schemagrep-cli", accountId: "tenant-a", scope: "files:read" },
+      3600,
+    );
+
+    const restarted = new PersistentOAuthAdapter(
+      "AccessToken",
+      new PersistentOAuthAdapterRepository(directory),
+    );
+    expect(await restarted.find("token")).toMatchObject({
+      clientId: "schemagrep-cli",
+      accountId: "tenant-a",
+      scope: "files:read",
+    });
+  });
+
   test("evicts pending clients without displacing active clients", async () => {
     const namespace = `test-${randomBytes(8).toString("hex")}:`;
-    const clients = new EphemeralOAuthAdapter(`${namespace}Client`);
-    const codes = new EphemeralOAuthAdapter(`${namespace}AuthorizationCode`);
+    const repository = await createAdapterRepository();
+    const clients = new PersistentOAuthAdapter(`${namespace}Client`, repository);
+    const codes = new PersistentOAuthAdapter(`${namespace}AuthorizationCode`, repository);
     await clients.upsert("active", { clientId: "active" }, undefined as unknown as number);
     await codes.upsert("code", { clientId: "active" }, 60);
     for (let index = 0; index <= 100; index += 1) {
@@ -100,8 +142,9 @@ describe("ephemeral OAuth adapter", () => {
 
   test("evicts active clients only within the same account", async () => {
     const namespace = `test-${randomBytes(8).toString("hex")}:`;
-    const clients = new EphemeralOAuthAdapter(`${namespace}Client`);
-    const codes = new EphemeralOAuthAdapter(`${namespace}AuthorizationCode`);
+    const repository = await createAdapterRepository();
+    const clients = new PersistentOAuthAdapter(`${namespace}Client`, repository);
+    const codes = new PersistentOAuthAdapter(`${namespace}AuthorizationCode`, repository);
     await clients.upsert("other-account", { clientId: "other-account" }, undefined as unknown as number);
     await codes.upsert("other-code", { clientId: "other-account", accountId: "other" }, 60);
     for (let index = 0; index <= 20; index += 1) {
@@ -115,8 +158,9 @@ describe("ephemeral OAuth adapter", () => {
   });
 
   test("bounds records per OAuth client", async () => {
-    const adapter = new EphemeralOAuthAdapter(
+    const adapter = new PersistentOAuthAdapter(
       `test-${randomBytes(8).toString("hex")}:Interaction`,
+      await createAdapterRepository(),
     );
     for (let index = 0; index <= 500; index += 1) {
       await adapter.upsert(`interaction-${index}`, { clientId: "abandoned-client" }, 600);
@@ -126,8 +170,9 @@ describe("ephemeral OAuth adapter", () => {
   });
 
   test("isolates token record bounds by account before client", async () => {
-    const adapter = new EphemeralOAuthAdapter(
+    const adapter = new PersistentOAuthAdapter(
       `test-${randomBytes(8).toString("hex")}:AccessToken`,
+      await createAdapterRepository(),
     );
     await adapter.upsert(
       "other-account-token",
@@ -149,11 +194,13 @@ describe("ephemeral OAuth adapter", () => {
 
 describe("OAuth MCP authorization", () => {
   test("discovers OAuth, completes PKCE consent, refreshes, and isolates MCP by tenant", async () => {
+    const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-oauth-flow-test-"));
+    temporaryDirectories.push(storageBaseDirectory);
     const config: ServiceConfig = {
       host: "127.0.0.1",
       port: 3000,
       schemagrepBinary: "schemagrep",
-      storageBaseDirectory: "/tmp/schemagrep-cloud-oauth-tests",
+      storageBaseDirectory,
       fileTtlMs: 3_600_000,
       processTimeoutMs: 30_000,
       maxUploadBytes: 1024,
@@ -187,6 +234,22 @@ describe("OAuth MCP authorization", () => {
     expect(await authorizationMetadata.json()).toMatchObject({
       revocation_endpoint: `${address}/oauth/token/revocation`,
     });
+    const registrationResponse = await fetch(`${address}/oauth/reg`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "persistent test client",
+        redirect_uris: ["http://127.0.0.1:47831/dynamic-callback"],
+        response_types: ["code"],
+        grant_types: ["authorization_code", "refresh_token"],
+        token_endpoint_auth_method: "none",
+      }),
+    });
+    expect(registrationResponse.status).toBe(201);
+    const registration = await registrationResponse.json() as Record<string, unknown>;
+    expect(registration.client_id).toBeString();
+    const dynamicClientId = String(registration.client_id);
+
     const challenge = await fetch(`${address}/mcp`, { method: "POST" });
     expect(challenge.status).toBe(401);
     expect(challenge.headers.get("www-authenticate")).toContain("resource_metadata=");
@@ -258,6 +321,28 @@ describe("OAuth MCP authorization", () => {
     const tokens = await tokenResponse.json() as Record<string, unknown>;
     expect(tokens.access_token).toBeString();
     expect(tokens.refresh_token).toBeString();
+
+    await app.close();
+    app = undefined;
+    app = buildApp({ config, fileService: new OAuthFileService() });
+    await app.listen({ host: "127.0.0.1", port: 3199 });
+
+    const dynamicAuthorization = new URL(`${address}/oauth/auth`);
+    dynamicAuthorization.search = new URLSearchParams({
+      response_type: "code",
+      client_id: dynamicClientId,
+      redirect_uri: "http://127.0.0.1:47831/dynamic-callback",
+      scope: "files:read",
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+      state: randomBytes(24).toString("base64url"),
+      resource: `${address}/mcp`,
+    }).toString();
+    const dynamicAuthorizeResponse = await new CookieJar().fetch(dynamicAuthorization.href);
+    expect(dynamicAuthorizeResponse.status).toBe(303);
+    expect(
+      new URL(dynamicAuthorizeResponse.headers.get("location") as string, address).pathname,
+    ).toStartWith("/oauth-login/");
 
     const filesResponse = await fetch(`${address}/v1/files`, {
       headers: { authorization: `Bearer ${String(tokens.access_token)}` },

@@ -1,238 +1,73 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
-import Provider, {
-  type Adapter,
-  type AdapterPayload,
-  type Configuration,
-} from "oidc-provider";
+import {
+  chmodSync,
+  closeSync,
+  fsyncSync,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import Provider, { type Configuration } from "oidc-provider";
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import { CLI_CLIENT_ID, CLI_REDIRECT_URI, OAUTH_SCOPES } from "./constants";
+import { PersistentOAuthAdapter, PersistentOAuthAdapterRepository } from "./adapter";
 
+const SIGNING_KEY_FILENAME = "signing-key.json";
 
-interface StoredModel {
-  payload: AdapterPayload;
-  createdAt: number;
-  expiresAt: number;
-  activeClient?: boolean;
-  accountId?: string;
-  lastActiveAt?: number;
+function readSigningKey(path: string): JsonWebKey {
+  const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    (parsed as JsonWebKey).kty !== "RSA" ||
+    typeof (parsed as JsonWebKey).n !== "string" ||
+    typeof (parsed as JsonWebKey).e !== "string" ||
+    typeof (parsed as JsonWebKey).d !== "string"
+  ) {
+    throw new Error(`Stored OAuth signing key is invalid: ${path}`);
+  }
+  chmodSync(path, 0o600);
+  return parsed as JsonWebKey;
 }
 
-const models = new Map<string, Map<string, StoredModel>>();
-const MAX_PENDING_CLIENTS = 100;
-const MAX_ACTIVE_CLIENTS_PER_ACCOUNT = 20;
-const MAX_MODEL_RECORDS = 5000;
-const MAX_OWNER_RECORDS = 500;
-const PENDING_CLIENT_TTL_SECONDS = 60 * 60;
-const ACTIVE_CLIENT_TTL_SECONDS = 30 * 24 * 60 * 60;
-const DEFAULT_MODEL_TTL_SECONDS = 60 * 60;
-
-function modelStore(name: string): Map<string, StoredModel> {
-  let store = models.get(name);
-  if (store === undefined) {
-    store = new Map();
-    models.set(name, store);
+function loadOrCreateSigningKey(storageDirectory: string): JsonWebKey {
+  mkdirSync(storageDirectory, { recursive: true, mode: 0o700 });
+  const path = join(storageDirectory, SIGNING_KEY_FILENAME);
+  try {
+    return readSigningKey(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  return store;
+
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = privateKey.export({ format: "jwk" });
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  const descriptor = openSync(temporaryPath, "wx", 0o600);
+  try {
+    writeFileSync(descriptor, `${JSON.stringify(jwk)}\n`, "utf8");
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+  try {
+    linkSync(temporaryPath, path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    return readSigningKey(path);
+  } finally {
+    unlinkSync(temporaryPath);
+  }
+  return jwk;
 }
-
-export class EphemeralOAuthAdapter implements Adapter {
-  private readonly store: Map<string, StoredModel>;
-  private readonly modelName: string;
-  private readonly namespace: string;
-
-  constructor(name: string) {
-    this.store = modelStore(name);
-    const separator = name.lastIndexOf(":");
-    this.namespace = separator < 0 ? "" : name.slice(0, separator + 1);
-    this.modelName = name.slice(separator + 1);
-  }
-
-  async upsert(id: string, payload: AdapterPayload, expiresIn: number): Promise<void> {
-    const now = Date.now();
-    this.pruneExpired(now);
-    const existing = this.store.get(id);
-    if (existing === undefined) this.makeRoom(payload);
-    const dynamicClient = this.modelName === "Client";
-    const ttlSeconds = expiresIn ??
-      (dynamicClient
-        ? existing?.activeClient === true ? ACTIVE_CLIENT_TTL_SECONDS : PENDING_CLIENT_TTL_SECONDS
-        : DEFAULT_MODEL_TTL_SECONDS);
-    this.store.set(id, {
-      payload: structuredClone(payload),
-      createdAt: existing?.createdAt ?? now,
-      expiresAt: now + ttlSeconds * 1000,
-      ...(existing?.activeClient === true ? { activeClient: true } : {}),
-      ...(existing?.accountId === undefined ? {} : { accountId: existing.accountId }),
-      ...(existing?.lastActiveAt === undefined ? {} : { lastActiveAt: existing.lastActiveAt }),
-    });
-    if (this.recordsClientActivity(payload)) {
-      this.markClientActive(
-        String(payload.clientId),
-        now,
-        typeof payload.accountId === "string" ? payload.accountId : undefined,
-      );
-    }
-  }
-
-  async find(id: string): Promise<AdapterPayload | undefined> {
-    const record = this.store.get(id);
-    if (record === undefined) return undefined;
-    const now = Date.now();
-    if (record.expiresAt <= now) {
-      this.store.delete(id);
-      return undefined;
-    }
-    if (this.recordsClientActivity(record.payload)) {
-      this.markClientActive(
-        String(record.payload.clientId),
-        now,
-        typeof record.payload.accountId === "string" ? record.payload.accountId : undefined,
-      );
-    }
-    return structuredClone(record.payload);
-  }
-
-  async findByUserCode(userCode: string): Promise<AdapterPayload | undefined> {
-    return this.findBy("userCode", userCode);
-  }
-
-  async findByUid(uid: string): Promise<AdapterPayload | undefined> {
-    return this.findBy("uid", uid);
-  }
-
-  async consume(id: string): Promise<void> {
-    const record = this.store.get(id);
-    if (record !== undefined) record.payload.consumed = Math.floor(Date.now() / 1000);
-  }
-
-  async destroy(id: string): Promise<void> {
-    this.store.delete(id);
-  }
-
-  async revokeByGrantId(grantId: string): Promise<void> {
-    for (const [id, record] of this.store) {
-      if (record.payload.grantId === grantId) this.store.delete(id);
-    }
-  }
-
-  private makeRoom(payload: AdapterPayload): void {
-    if (this.modelName === "Client") {
-      while (this.countRecords(this.store, (record) => record.activeClient !== true) >= MAX_PENDING_CLIENTS) {
-        this.evictOldest((record) => record.activeClient !== true);
-      }
-      return;
-    }
-    const owner = typeof payload.accountId === "string"
-      ? `account:${payload.accountId}`
-      : typeof payload.clientId === "string"
-        ? `client:${payload.clientId}`
-        : undefined;
-    if (owner !== undefined) {
-      const owned = (record: StoredModel): boolean => {
-        const recordOwner = typeof record.payload.accountId === "string"
-          ? `account:${record.payload.accountId}`
-          : typeof record.payload.clientId === "string"
-            ? `client:${record.payload.clientId}`
-            : undefined;
-        return recordOwner === owner;
-      };
-      while (this.countRecords(this.store, owned) >= MAX_OWNER_RECORDS) {
-        this.evictOldest(owned);
-      }
-    }
-    while (this.store.size >= MAX_MODEL_RECORDS) this.evictOldest(() => true);
-  }
-
-  private countRecords(
-    store: Map<string, StoredModel>,
-    predicate: (record: StoredModel) => boolean,
-  ): number {
-    let count = 0;
-    for (const record of store.values()) {
-      if (predicate(record)) count += 1;
-    }
-    return count;
-  }
-
-  private evictOldest(predicate: (record: StoredModel) => boolean): void {
-    let oldest: { id: string; createdAt: number } | undefined;
-    for (const [id, record] of this.store) {
-      if (!predicate(record)) continue;
-      if (oldest === undefined || record.createdAt < oldest.createdAt) {
-        oldest = { id, createdAt: record.createdAt };
-      }
-    }
-    if (oldest !== undefined) this.store.delete(oldest.id);
-  }
-
-  private evictLeastRecentlyActive(
-    clients: Map<string, StoredModel>,
-    predicate: (record: StoredModel) => boolean,
-  ): void {
-    let leastRecent: { id: string; timestamp: number } | undefined;
-    for (const [id, record] of clients) {
-      if (!predicate(record)) continue;
-      const timestamp = record.lastActiveAt ?? record.createdAt;
-      if (leastRecent === undefined || timestamp < leastRecent.timestamp) {
-        leastRecent = { id, timestamp };
-      }
-    }
-    if (leastRecent !== undefined) clients.delete(leastRecent.id);
-  }
-
-  private markClientActive(clientId: string, now: number, accountId: string | undefined): void {
-    const clients = modelStore(`${this.namespace}Client`);
-    for (const [id, record] of clients) {
-      if (record.expiresAt <= now) clients.delete(id);
-    }
-    const client = clients.get(clientId);
-    if (client === undefined) return;
-    const owner = accountId ?? client.accountId ?? "unknown";
-    if (client.activeClient !== true) {
-      const sameAccount = (record: StoredModel): boolean =>
-        record.activeClient === true && (record.accountId ?? "unknown") === owner;
-      while (this.countRecords(clients, sameAccount) >= MAX_ACTIVE_CLIENTS_PER_ACCOUNT) {
-        this.evictLeastRecentlyActive(clients, sameAccount);
-      }
-    }
-    client.activeClient = true;
-    client.accountId = owner;
-    client.lastActiveAt = now;
-    client.expiresAt = now + ACTIVE_CLIENT_TTL_SECONDS * 1000;
-  }
-
-  private recordsClientActivity(payload: AdapterPayload): boolean {
-    return typeof payload.clientId === "string" &&
-      ["AuthorizationCode", "AccessToken", "RefreshToken"].includes(this.modelName);
-  }
-
-  private pruneExpired(now: number): void {
-    for (const [id, record] of this.store) {
-      if (record.expiresAt <= now) this.store.delete(id);
-    }
-  }
-
-  private async findBy(field: "uid" | "userCode", value: string): Promise<AdapterPayload | undefined> {
-    const now = Date.now();
-    this.pruneExpired(now);
-    for (const record of this.store.values()) {
-      if (record.payload[field] !== value) continue;
-      if (this.recordsClientActivity(record.payload)) {
-        this.markClientActive(
-          String(record.payload.clientId),
-          now,
-          typeof record.payload.accountId === "string" ? record.payload.accountId : undefined,
-        );
-      }
-      return structuredClone(record.payload);
-    }
-    return undefined;
-  }
-}
-
 export interface OAuthServiceOptions {
   publicBaseUrl: string;
   cookieKey: string;
+  storageDirectory: string;
 }
 
 export class OAuthService {
@@ -247,12 +82,11 @@ export class OAuthService {
     this.resourceUrl = `${baseUrl}/mcp`;
     this.resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource/mcp`;
     const secureCookies = new URL(baseUrl).protocol === "https:";
-    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const jwk = privateKey.export({ format: "jwk" });
-    const adapterNamespace = randomUUID();
+    const jwk = loadOrCreateSigningKey(options.storageDirectory);
+    const adapterRepository = new PersistentOAuthAdapterRepository(options.storageDirectory);
 
     const configuration: Configuration = {
-      adapter: (name) => new EphemeralOAuthAdapter(`${adapterNamespace}:${name}`),
+      adapter: (name) => new PersistentOAuthAdapter(name, adapterRepository),
       clients: [
         {
           client_id: CLI_CLIENT_ID,

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isIP } from "node:net";
+import { join } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import multipart from "@fastify/multipart";
@@ -95,7 +96,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const oauth = !config.authDisabled &&
     config.publicBaseUrl !== undefined &&
     config.oauthCookieKey !== undefined
-    ? new OAuthService({ publicBaseUrl: config.publicBaseUrl, cookieKey: config.oauthCookieKey })
+    ? new OAuthService({
+      publicBaseUrl: config.publicBaseUrl,
+      cookieKey: config.oauthCookieKey,
+      storageDirectory: join(config.storageBaseDirectory, "oauth"),
+    })
     : undefined;
   const rateLimiter = new FixedWindowRateLimiter(config.rateLimitMax, config.rateLimitWindowMs);
   const oauthRateLimiter = new FixedWindowRateLimiter(config.rateLimitMax, config.rateLimitWindowMs);

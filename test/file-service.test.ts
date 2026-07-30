@@ -9,7 +9,7 @@ import {
   TenantStorageQuotaError,
   UnsupportedFileTypeError,
 } from "../src/files/errors";
-import { EphemeralFileService } from "../src/files/service";
+import { PersistentFileService } from "../src/files/service";
 import type { SchemagrepProcessor } from "../src/schemagrep/runner";
 import type { StructuredQueryRequest } from "../src/query/contract";
 
@@ -50,7 +50,7 @@ afterEach(async () => {
 
 const OWNER_ID = "tenant-a";
 
-describe("EphemeralFileService", () => {
+describe("PersistentFileService", () => {
   test("retains only encoded and schema artifacts, then expires both", async () => {
     const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
     temporaryDirectories.push(storageBaseDirectory);
@@ -59,7 +59,7 @@ describe("EphemeralFileService", () => {
     await writeFile(join(abandonedDirectory, "raw-upload.jsonl"), "must be deleted");
     let now = Date.parse("2026-07-29T00:00:00.000Z");
     const runner = new FakeProcessor();
-    const service = new EphemeralFileService({
+    const service = new PersistentFileService({
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
@@ -100,26 +100,57 @@ describe("EphemeralFileService", () => {
     expect(await service.delete(record.id, "tenant-b")).toBe(false);
     expect(await service.get(record.id, OWNER_ID)).toEqual(record);
 
-    const instanceNames = await readdir(storageBaseDirectory);
-    expect(instanceNames).toHaveLength(1);
-    const [instanceName] = instanceNames;
-    if (instanceName === undefined) throw new Error("Expected an instance directory");
-    const [fileName] = await readdir(join(storageBaseDirectory, instanceName));
-    if (fileName === undefined) throw new Error("Expected an uploaded file directory");
-    expect(fileName).toBe(record.id);
-    const retainedArtifacts = (await readdir(join(storageBaseDirectory, instanceName, fileName))).sort();
-    expect(retainedArtifacts).toEqual(["artifact.sg", "schema.txt"]);
+    expect(await readdir(storageBaseDirectory)).toEqual(["files"]);
+    const filesDirectory = join(storageBaseDirectory, "files");
+    expect(await readdir(filesDirectory)).toEqual([record.id]);
+    const retainedArtifacts = (await readdir(join(filesDirectory, record.id))).sort();
+    expect(retainedArtifacts).toEqual(["artifact.sg", "metadata.json", "schema.txt"]);
 
     now += 1001;
     expect(await service.get(record.id, OWNER_ID)).toBeUndefined();
-    expect(await readdir(join(storageBaseDirectory, instanceName))).toEqual([]);
+    expect(await readdir(filesDirectory)).toEqual([]);
     await service.close();
+  });
+
+  test("recovers tenant metadata and artifacts after a service restart", async () => {
+    const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
+    temporaryDirectories.push(storageBaseDirectory);
+    const now = Date.parse("2026-07-29T00:00:00.000Z");
+    const options = {
+      storageBaseDirectory,
+      fileTtlMs: 60_000,
+      maxUploadBytes: 1024,
+      maxTenantStorageBytes: 4096,
+      runner: new FakeProcessor(),
+      now: () => now,
+    };
+    const firstService = new PersistentFileService(options);
+    const record = await firstService.ingest(
+      {
+        filename: "events.jsonl",
+        stream: Readable.from(['{"id":1}\n']),
+        wasTruncated: () => false,
+      },
+      OWNER_ID,
+    );
+    const usageBeforeRestart = await firstService.usage(OWNER_ID);
+    await firstService.close();
+
+    const restartedService = new PersistentFileService(options);
+    expect(await restartedService.list(OWNER_ID)).toEqual([record]);
+    expect(await restartedService.get(record.id, OWNER_ID)).toEqual(record);
+    expect(await restartedService.get(record.id, "tenant-b")).toBeUndefined();
+    expect(await restartedService.readSchema(record.id, OWNER_ID)).toBe("[schema]\n");
+    expect(await restartedService.usage(OWNER_ID)).toEqual(usageBeforeRestart);
+    await restartedService.close();
+
+    expect(await readdir(join(storageBaseDirectory, "files"))).toEqual([record.id]);
   });
 
   test("rejects path-like and control-character filenames", async () => {
     const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
     temporaryDirectories.push(storageBaseDirectory);
-    const service = new EphemeralFileService({
+    const service = new PersistentFileService({
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
@@ -148,7 +179,7 @@ describe("EphemeralFileService", () => {
     const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
     temporaryDirectories.push(storageBaseDirectory);
     const runner = new FakeProcessor();
-    const service = new EphemeralFileService({
+    const service = new PersistentFileService({
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
@@ -175,7 +206,7 @@ describe("EphemeralFileService", () => {
   test("tracks retained-byte quotas independently per tenant and releases usage on delete", async () => {
     const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
     temporaryDirectories.push(storageBaseDirectory);
-    const service = new EphemeralFileService({
+    const service = new PersistentFileService({
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
@@ -206,7 +237,7 @@ describe("EphemeralFileService", () => {
   test("rejects unsupported extensions before creating storage", async () => {
     const storageBaseDirectory = await mkdtemp(join(tmpdir(), "schemagrep-service-test-"));
     temporaryDirectories.push(storageBaseDirectory);
-    const service = new EphemeralFileService({
+    const service = new PersistentFileService({
       storageBaseDirectory,
       fileTtlMs: 1000,
       maxUploadBytes: 1024,
