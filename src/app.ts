@@ -18,7 +18,8 @@ import {
 } from "./telemetry/product";
 import { registerFeedbackRoutes } from "./feedback/routes";
 import { FeedbackStore } from "./feedback/store";
-import { OAuthService, OAUTH_SCOPES } from "./oauth/provider";
+import { OAuthService } from "./oauth/provider";
+import { OAUTH_SCOPES } from "./oauth/constants";
 import { registerOAuthRoutes } from "./oauth/routes";
 
 export interface BuildAppOptions {

@@ -5,10 +5,8 @@ import Provider, {
   type Configuration,
 } from "oidc-provider";
 import type { AuthInfo } from "@modelcontextprotocol/server";
+import { CLI_CLIENT_ID, CLI_REDIRECT_URI, OAUTH_SCOPES } from "./constants";
 
-export const OAUTH_SCOPES = ["files:read", "files:write", "files:delete"] as const;
-export const CLI_CLIENT_ID = "schemagrep-cli";
-export const CLI_REDIRECT_URI = "http://127.0.0.1:47831/callback";
 
 interface StoredModel {
   payload: AdapterPayload;

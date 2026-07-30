@@ -8,7 +8,7 @@ import { basename, dirname, join } from "node:path";
 import { homedir, platform } from "node:os";
 import { promisify } from "node:util";
 import { lock } from "proper-lockfile";
-import { CLI_CLIENT_ID, CLI_REDIRECT_URI, OAUTH_SCOPES } from "./oauth/provider";
+import { CLI_CLIENT_ID, CLI_REDIRECT_URI, OAUTH_SCOPES } from "./oauth/constants";
 
 const execFileAsync = promisify(execFile);
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
