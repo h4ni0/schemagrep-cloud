@@ -74,7 +74,7 @@
         <section class="panel setup-panel" aria-labelledby="setup-title">
           <p class="step-label">Step 2</p>
           <h3 id="setup-title">Connect your AI client</h3>
-          <p>Use the hosted MCP endpoint with the same beta key. Your model provider remains separate.</p>
+          <p>Your client will open browser authorization automatically. Do not paste your beta key into model settings.</p>
           <div class="endpoint-box">
             <span>MCP endpoint</span>
             <code id="mcp-endpoint"></code>
@@ -83,6 +83,30 @@
           <p id="config-status" class="status" role="status" aria-live="polite"></p>
         </section>
       </div>
+      <section id="usage-panel" class="panel usage-panel" aria-labelledby="usage-title">
+        <div class="dataset-heading">
+          <div>
+            <p class="step-label">Workspace usage</p>
+            <h3 id="usage-title">What this beta has processed</h3>
+          </div>
+          <span id="usage-storage" class="codec-badge">Loading</span>
+        </div>
+        <div class="usage-stats" aria-live="polite">
+          <div><span id="usage-active-files">—</span><small>Active files</small></div>
+          <div><span id="usage-source-bytes">—</span><small>Source data encoded</small></div>
+          <div><span id="usage-uploads">—</span><small>Successful uploads</small></div>
+          <div><span id="usage-queries">—</span><small>REST queries</small></div>
+          <div><span id="usage-mcp">—</span><small>MCP requests</small></div>
+        </div>
+        <progress id="usage-progress" value="0" max="1" aria-label="Retained storage usage"></progress>
+        <div class="active-files-heading">
+          <strong>Active datasets</strong>
+          <span>Newest first</span>
+        </div>
+        <ul id="active-files" class="active-files"></ul>
+        <p id="usage-status" class="status" role="status" aria-live="polite"></p>
+      </section>
+
 
       <section id="dataset-panel" class="panel dataset-panel" aria-labelledby="dataset-title" hidden>
         <div class="dataset-heading">

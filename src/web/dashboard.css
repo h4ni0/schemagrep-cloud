@@ -260,6 +260,7 @@ textarea:focus,
 }
 .upload-panel,
 .setup-panel,
+.usage-panel,
 .dataset-panel,
 .feedback-panel { padding: 30px; }
 
@@ -298,6 +299,70 @@ code {
   font-size: 13px;
   overflow-wrap: anywhere;
 }
+
+.usage-panel { margin-top: 20px; }
+.usage-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 24px 0 16px;
+}
+.usage-stats div {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0b1513;
+}
+.usage-stats span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text);
+  font-family: "Manrope Variable", sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.usage-stats small { color: var(--muted); line-height: 1.35; }
+.usage-panel progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  border: 0;
+  border-radius: 99px;
+  overflow: hidden;
+  background: #0b1513;
+}
+.usage-panel progress::-webkit-progress-bar { background: #0b1513; }
+.usage-panel progress::-webkit-progress-value { background: var(--accent); }
+.usage-panel progress::-moz-progress-bar { background: var(--accent); }
+.active-files-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 24px 0 10px;
+}
+.active-files-heading span { color: var(--muted); font-size: 12px; }
+.active-files {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.active-files li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0b1513;
+}
+.active-files li > div { display: grid; gap: 3px; min-width: 0; }
+.active-files li > span { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+.active-files .empty { justify-content: center; color: var(--muted); }
 
 .dataset-panel { margin-top: 20px; }
 .codec-badge { color: var(--accent); border-color: #35664f; }
@@ -394,9 +459,12 @@ footer {
   .access-panel, .workspace-grid { grid-template-columns: 1fr; }
   .access-panel { gap: 26px; padding: 25px; }
   .workspace-grid { gap: 14px; }
-  .upload-panel, .setup-panel, .dataset-panel, .feedback-panel { padding: 23px; }
+  .upload-panel, .setup-panel, .usage-panel, .dataset-panel, .feedback-panel { padding: 23px; }
   .dataset-facts { grid-template-columns: 1fr; }
   .feedback-grid, .feedback-detail-grid { grid-template-columns: 1fr; }
+  .usage-stats { grid-template-columns: 1fr 1fr; }
+  .active-files li { align-items: flex-start; flex-direction: column; }
+  .active-files li > span { flex: 1 1 auto; }
   .feedback-actions { align-items: stretch; flex-direction: column; }
   .feedback-actions .button { width: 100%; }
   .input-action, .copy-row, .dataset-actions { align-items: stretch; flex-direction: column; }

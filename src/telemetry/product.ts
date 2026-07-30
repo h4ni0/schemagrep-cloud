@@ -1,6 +1,8 @@
 import { createHmac } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { createInterface } from "node:readline";
 
 const FORMAT_VERSION = 1;
 const ACTIONS = ["session", "upload", "metadata", "schema", "query", "delete", "feedback", "mcp"] as const;
@@ -44,6 +46,15 @@ export interface ProductTelemetrySummary {
   byLatency: Record<string, number>;
   queryModes: Record<string, number>;
 }
+export interface TenantProductUsage {
+  events: number;
+  successfulUploads: number;
+  queries: number;
+  schemaReads: number;
+  mcpRequests: number;
+  errors: number;
+}
+
 
 function includes<T extends string>(values: readonly T[], value: unknown): value is T {
   return typeof value === "string" && values.includes(value as T);
@@ -83,20 +94,38 @@ function parseEvent(line: string): ProductEvent | null {
   return event as unknown as ProductEvent;
 }
 
+function tenantHash(hashKey: string, tenantId: string): string {
+  return createHmac("sha256", hashKey).update(tenantId).digest("hex").slice(0, 24);
+}
+
+function emptyTenantUsage(): TenantProductUsage {
+  return {
+    events: 0,
+    successfulUploads: 0,
+    queries: 0,
+    schemaReads: 0,
+    mcpRequests: 0,
+    errors: 0,
+  };
+}
+
 export class ProductTelemetry {
-  private pending: Promise<void> = Promise.resolve();
+  private pending: Promise<void>;
+  private readonly tenantUsage = new Map<string, TenantProductUsage>();
 
   constructor(
     readonly path: string,
     private readonly hashKey: string,
     private readonly reportError: (error: Error) => void = () => undefined,
-  ) {}
+  ) {
+    this.pending = this.loadTenantUsage().catch((error: unknown) => this.report(error));
+  }
 
   record(input: ProductTelemetryInput): void {
     const event: ProductEvent = {
       v: FORMAT_VERSION,
       day: new Date().toISOString().slice(0, 10),
-      tenant: createHmac("sha256", this.hashKey).update(input.tenantId).digest("hex").slice(0, 24),
+      tenant: tenantHash(this.hashKey, input.tenantId),
       action: input.action,
       outcome: input.outcome,
       status: input.status,
@@ -107,19 +136,57 @@ export class ProductTelemetry {
       await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
       await appendFile(this.path, `${JSON.stringify(event)}\n`, { encoding: "utf8", mode: 0o600 });
       await chmod(this.path, 0o600);
-    }).catch((error: unknown) => {
-      try {
-        this.reportError(error instanceof Error ? error : new Error(String(error)));
-      } catch {
-        // Product telemetry must never affect a customer request.
-      }
-    });
+      this.addToTenantUsage(event);
+    }).catch((error: unknown) => this.report(error));
   }
 
   flush(): Promise<void> {
     return this.pending;
   }
+
+  async summarizeTenant(tenantId: string): Promise<TenantProductUsage> {
+    await this.pending;
+    return {
+      ...(this.tenantUsage.get(tenantHash(this.hashKey, tenantId)) ?? emptyTenantUsage()),
+    };
+  }
+
+  private async loadTenantUsage(): Promise<void> {
+    const input = createReadStream(this.path, { encoding: "utf8" });
+    try {
+      const lines = createInterface({ input, crlfDelay: Infinity });
+      for await (const line of lines) {
+        if (line.length === 0) continue;
+        const event = parseEvent(line);
+        if (event !== null) this.addToTenantUsage(event);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } finally {
+      input.destroy();
+    }
+  }
+
+  private addToTenantUsage(event: ProductEvent): void {
+    const usage = this.tenantUsage.get(event.tenant) ?? emptyTenantUsage();
+    usage.events += 1;
+    if (event.outcome === "error") usage.errors += 1;
+    if (event.action === "upload" && event.outcome === "ok") usage.successfulUploads += 1;
+    if (event.action === "query") usage.queries += 1;
+    if (event.action === "schema") usage.schemaReads += 1;
+    if (event.action === "mcp") usage.mcpRequests += 1;
+    this.tenantUsage.set(event.tenant, usage);
+  }
+
+  private report(error: unknown): void {
+    try {
+      this.reportError(error instanceof Error ? error : new Error(String(error)));
+    } catch {
+      // Product telemetry must never affect a customer request.
+    }
+  }
 }
+
 
 export async function summarizeProductTelemetry(path: string): Promise<ProductTelemetrySummary> {
   const summary: ProductTelemetrySummary = {

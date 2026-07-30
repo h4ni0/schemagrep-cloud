@@ -23,6 +23,7 @@ import type {
   FileService,
   PublicFileRecord,
   StoredFileRecord,
+  TenantFileUsage,
   SupportedCodec,
   UploadSource,
 } from "./types";
@@ -180,6 +181,31 @@ export class EphemeralFileService implements FileService {
     }
   }
 
+  async list(ownerId: string): Promise<PublicFileRecord[]> {
+    await this.deleteExpired();
+    return [...this.files.values()]
+      .filter((record) => record.ownerId === ownerId)
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+      .map((record) => this.toPublicRecord(record));
+  }
+
+  async usage(ownerId: string): Promise<TenantFileUsage> {
+    await this.deleteExpired();
+    let activeFiles = 0;
+    let sourceBytes = 0;
+    for (const record of this.files.values()) {
+      if (record.ownerId !== ownerId) continue;
+      activeFiles += 1;
+      sourceBytes += record.sourceBytes;
+    }
+    return {
+      activeFiles,
+      sourceBytes,
+      retainedBytes: this.tenantStorageBytes.get(ownerId) ?? 0,
+      maxRetainedBytes: this.options.maxTenantStorageBytes,
+    };
+  }
+
   async get(id: string, ownerId: string): Promise<PublicFileRecord | undefined> {
     await this.expireIfNeeded(id);
     const record = this.files.get(id);
@@ -264,6 +290,7 @@ export class EphemeralFileService implements FileService {
   }
 
   private async remove(record: StoredFileRecord): Promise<void> {
+    if (this.files.get(record.id) !== record) return;
     this.files.delete(record.id);
     const tenantUsage = this.tenantStorageBytes.get(record.ownerId) ?? 0;
     const remainingUsage = tenantUsage - record.retainedBytes;

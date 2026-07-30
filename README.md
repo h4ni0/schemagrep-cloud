@@ -6,7 +6,8 @@ Hosted model calls are not implemented. Customer-owned models connect through th
 
 ## Prerequisites
 
-- Bun 1.3 or newer
+- Node.js 22 LTS or newer
+- Bun 1.3 or newer (package installation and test runner)
 - C compiler and `make`
 - `pkg-config`
 - PCRE2 development headers (`pcre2` on Arch, `libpcre2-dev` on Debian/Ubuntu)
@@ -21,7 +22,7 @@ bun install
 bun run setup-engine
 export API_KEY="$(openssl rand -hex 32)"
 echo "Local API key: $API_KEY"
-SCHEMAGREP_API_KEYS="{\"local\":\"$API_KEY\"}" bun src/server.ts
+SCHEMAGREP_API_KEYS="{\"local\":\"$API_KEY\"}" bun run start
 ```
 
 For an existing clone:
@@ -33,13 +34,13 @@ bun install
 bun run setup-engine
 export API_KEY="$(openssl rand -hex 32)"
 echo "Local API key: $API_KEY"
-SCHEMAGREP_API_KEYS="{\"local\":\"$API_KEY\"}" bun src/server.ts
+SCHEMAGREP_API_KEYS="{\"local\":\"$API_KEY\"}" bun run start
 ```
 
 The service uses the bundled `vendor/schemagrep/schemagrep` binary by default. To use another build, provide its explicit path:
 
 ```bash
-SCHEMAGREP_BIN=/absolute/path/to/hshei/schemagrep bun src/server.ts
+SCHEMAGREP_BIN=/absolute/path/to/hshei/schemagrep bun run start
 ```
 
 Startup rejects missing, non-executable, or unrelated binaries before the API begins listening.
@@ -48,13 +49,37 @@ Startup rejects missing, non-executable, or unrelated binaries before the API be
 
 Open `http://127.0.0.1:3000/` in a browser. The dashboard is public static
 HTML/CSS/JavaScript; it stores the invite key only in the current tab's memory.
-After unlocking, a user can upload a file, copy its `file_...` ID and hosted MCP
-configuration, copy a starter question, inspect expiry, or delete the artifact
-immediately. Uploads, schemas, queries, deletion, and MCP remain bearer-authenticated.
+After unlocking, a user can upload a file, inspect active datasets and retained
+storage, see upload/query/MCP usage, copy a `file_...` ID and hosted MCP
+configuration, copy a starter question, inspect expiry, or delete an artifact.
+Uploads, schemas, queries, deletion, and MCP remain bearer-authenticated.
 
-The dashboard is an upload and connection surface, not a chat product.
-Customer-owned model clients still perform inference and send only structured
+The dashboard is an upload, lifecycle, and usage surface—not a chat product.
+Customer-owned model clients perform inference and send only structured
 schema/query tool calls to this service.
+
+## Terminal cloud workflow
+
+When OAuth is enabled, authenticate once with the invite key in a browser. Access
+and refresh tokens are stored in the OS credential store (`secret-tool` on
+Linux, Keychain on macOS); the invite key is never copied into client settings.
+
+```bash
+bun run cloud -- login --server https://beta.example.com
+bun run cloud -- upload ./events.jsonl
+bun run cloud -- files
+bun run cloud -- schema file_...
+bun run cloud -- query file_... --mode count --key type --value push
+bun run cloud -- query file_... --mode rows
+bun run cloud -- delete file_...
+```
+
+Advanced queries may use `--request '{"mode":...}'`; repeat `--where` with one
+JSON filter object per predicate. The CLI refreshes expired access tokens
+automatically. The website is not involved after authorization.
+
+The direct bearer-key REST examples below remain available for operators and
+local debugging.
 
 ## Upload a JSONL file
 
@@ -97,36 +122,37 @@ return their schemagrep result in `answer`.
 
 ## Connect a customer-owned model through MCP
 
-Configure a remote Streamable HTTP MCP server in the model client:
+With OAuth enabled, configure only the remote Streamable HTTP endpoint:
 
 ```json
 {
   "mcpServers": {
     "schemagrep": {
       "type": "http",
-      "url": "http://127.0.0.1:3000/mcp",
-      "headers": {
-        "Authorization": "Bearer <service-api-key>"
-      }
+      "url": "https://beta.example.com/mcp"
     }
   }
 }
 ```
 
-Client configuration field names vary, but the transport URL and bearer header
-are the same. The endpoint supports the current 2026 Streamable HTTP protocol
-and the stateless 2025 fallback.
+The MCP client discovers OAuth from the initial `401`, opens browser
+authorization with PKCE, and refreshes its access token. It must support Remote
+Streamable HTTP MCP and OAuth custom authorization; clients that accept only a
+URL and do not implement MCP OAuth cannot connect. Static bearer headers remain
+supported for local/operator use.
 
-The server exposes two read-only tools:
+The endpoint supports the current 2026 Streamable HTTP protocol and the
+stateless 2025 fallback. It exposes three read-only tools:
 
 | Tool | Purpose |
 |---|---|
+| `schemagrep_list_files` | List the tenant's active uploads so the model can resolve a filename to a file ID |
 | `schemagrep_get_schema` | Read a tenant-owned file's schema and query primer |
 | `schemagrep_query` | Execute the same validated, bounded contract as the REST query endpoint |
 
-Upload remains a REST operation: upload the file, give its `file_...` ID to the
-model, and ask the question. The tool instructions tell the model to read the
-schema first and never infer a total from limited grep evidence. The customer's
+Upload from the dashboard or terminal CLI, then ask about the file by name or
+ID. Tool instructions make the model list files when needed, read the selected
+schema once, and never infer a total from limited grep evidence. The customer's
 model account pays for inference; schemagrep-cloud pays no model-provider cost.
 
 Delete the retained artifact:
@@ -143,6 +169,8 @@ GET    /assets/dashboard.css
 GET    /assets/dashboard.js
 GET    /health
 GET    /v1/session
+GET    /v1/usage
+GET    /v1/files
 POST   /v1/files
 GET    /v1/files/{id}
 GET    /v1/files/{id}/schema
@@ -150,11 +178,14 @@ POST   /v1/files/{id}/query
 DELETE /v1/files/{id}
 POST   /v1/feedback
 GET/POST/DELETE /mcp
+GET    /.well-known/oauth-protected-resource/mcp
+GET    /.well-known/oauth-authorization-server/oauth
+GET/POST /oauth/*
 ```
 
 The upload field must be named `file`. Supported filename extensions are `.csv`, `.json`, `.jsonl`, `.ndjson`, `.log`, and `.txt`.
 
-The dashboard and `GET /health` are public. Every data, session, feedback, and MCP route requires `Authorization: Bearer <service-api-key>`.
+The dashboard and OAuth discovery/interaction routes and `GET /health` are public. Data, session, usage, feedback, and MCP routes require a valid static API key or OAuth access token.
 
 ## Configuration
 
@@ -172,8 +203,11 @@ The dashboard and `GET /health` are public. Every data, session, feedback, and M
 | `SCHEMAGREP_BIN` | bundled engine binary |
 | `SCHEMAGREP_API_KEYS` | required JSON object mapping tenant IDs to 32–512 byte secrets |
 | `AUTH_DISABLED` | `false`; set `true` only for isolated local development |
+| `PUBLIC_BASE_URL` | disabled; public HTTPS origin that enables OAuth, e.g. `https://beta.example.com` |
+| `OAUTH_COOKIE_KEY` | required with `PUBLIC_BASE_URL`; random 32–512 byte cookie-signing secret |
 | `RATE_LIMIT_MAX` | `60` requests per tenant or unauthenticated IP |
 | `RATE_LIMIT_WINDOW_MS` | `60000` |
+| `TRUSTED_PROXY_CLIENT_IP_HEADER` | disabled; dedicated client-IP header overwritten by the loopback reverse proxy |
 | `MAX_TENANT_STORAGE_BYTES` | `536870912` retained artifact + schema bytes |
 | `WORKER_SANDBOX` | `bwrap`; set `disabled` only for isolated local development |
 | `BWRAP_BIN` | `/usr/bin/bwrap` |
@@ -185,26 +219,32 @@ The dashboard and `GET /health` are public. Every data, session, feedback, and M
 
 ## Invite-only deployment operations
 
-Use a single private instance behind a TLS reverse proxy. Keep Bun bound to
-`127.0.0.1`; only the proxy should be internet-facing. Set the public hostname
-in `MCP_ALLOWED_HOSTS`, retain the default Bubblewrap sandbox, and place
-`STORAGE_DIR`, `PRODUCT_TELEMETRY_PATH`, and `FEEDBACK_PATH` on private server storage.
+Use a single private instance behind a TLS reverse proxy. Keep the Node service
+bound to `127.0.0.1`; only the proxy should be internet-facing. Configure the
+proxy to overwrite one dedicated client-IP header, then name that header in
+`TRUSTED_PROXY_CLIENT_IP_HEADER`; never forward a client-supplied value. Set the
+public hostname in `MCP_ALLOWED_HOSTS`, configure `PUBLIC_BASE_URL`, retain the
+default Bubblewrap sandbox, and place `STORAGE_DIR`,
+`PRODUCT_TELEMETRY_PATH`, and `FEEDBACK_PATH` on private server storage.
 
 Example environment:
 
 ```bash
 export BETA_KEY="$(openssl rand -hex 32)"
 export TELEMETRY_HASH_KEY="$(openssl rand -hex 32)"
+export OAUTH_COOKIE_KEY="$(openssl rand -hex 32)"
 export SCHEMAGREP_API_KEYS="$(jq -nc --arg key "$BETA_KEY" '{"invite-001":$key}')"
 export HOST=127.0.0.1
 export PORT=3000
+export PUBLIC_BASE_URL=https://beta.example.com
 export MCP_ALLOWED_HOSTS=beta.example.com
+export TRUSTED_PROXY_CLIENT_IP_HEADER=cf-connecting-ip # Cloudflare overwrites this header
 export STORAGE_DIR=/var/lib/schemagrep-beta/files
 export PRODUCT_TELEMETRY_PATH=/var/lib/schemagrep-beta/product-events.jsonl
 export PRODUCT_TELEMETRY_HASH_KEY="$TELEMETRY_HASH_KEY"
 export FEEDBACK_PATH=/var/lib/schemagrep-beta/feedback.jsonl
 export FEEDBACK_RETENTION_DAYS=30
-bun src/server.ts
+bun run start
 ```
 
 Create one unique 32-byte-or-longer secret per invitee. Deliver it privately.
@@ -256,8 +296,11 @@ The byte fields returned in metadata are diagnostic measurements, not compressio
 
 The current API:
 
-- authenticates every REST and MCP request with a hashed bearer-key comparison;
-- scopes file reads, queries, and deletion to the tenant that uploaded the file;
+- supports MCP OAuth discovery, authorization-code PKCE, dynamic client registration, scoped opaque access tokens, rotating refresh tokens, and browser consent;
+- keeps OAuth grants and tokens process-local, so a restart revokes active OAuth sessions by design for this ephemeral beta;
+- retains hashed static bearer-key comparison for dashboard access, operators, and local clients;
+- never gives the MCP client the invite key; the terminal CLI stores OAuth tokens in the OS credential store;
+- scopes file reads, queries, and deletion to the tenant that uploaded the file and enforces `files:read`, `files:write`, and `files:delete`;
 - applies bounded in-memory rate limits per tenant and per unauthenticated IP;
 - caps each tenant's retained artifact and schema bytes, releasing quota on deletion or expiry;
 - streams uploads through a fixed byte limit;
@@ -269,7 +312,7 @@ The current API:
 - isolates MCP tools by the authenticated tenant and validates MCP Host and Origin headers against `MCP_ALLOWED_HOSTS`;
 - runs schemagrep under Bubblewrap with a private network namespace, cleared environment, read-only engine/input/system mounts, no capabilities, and a temporary writable `/tmp`;
 - bounds process time, generated artifact size, schema size, query output, and captured stderr;
-- accepts natural-language feedback only through the authenticated dashboard form after explicit consent, stores no dataset or tenant identifier with it, and removes expired entries;
+- accepts natural-language feedback only after explicit consent, stores no dataset or tenant identifier with it, and removes expired entries;
 - deletes the raw upload after processing and deletes retained artifacts on request or TTL expiry.
 
 Rate limits and storage quotas are per service process; a multi-replica deployment will need shared accounting. Bubblewrap isolates network and filesystem access, but production deployment should still add container/cgroup CPU and memory ceilings around the service.

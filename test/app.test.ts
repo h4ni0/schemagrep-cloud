@@ -83,7 +83,7 @@ describe("hosted beta application", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
-    expect(JSON.parse(authorized.body)).toEqual({ authenticated: true });
+    expect(JSON.parse(authorized.body)).toEqual({ authenticated: true, oauth: false });
     expect(authorized.body).not.toContain("beta");
     expect(await summarizeProductTelemetry(telemetryPath)).toMatchObject({
       events: 1,

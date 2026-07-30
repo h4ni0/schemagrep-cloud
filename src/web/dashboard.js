@@ -44,8 +44,19 @@
   const feedbackConsent = element("feedback-consent");
   const feedbackSubmit = element("feedback-submit");
   const feedbackStatus = element("feedback-status");
+  const usageStorage = element("usage-storage");
+  const usageActiveFiles = element("usage-active-files");
+  const usageSourceBytes = element("usage-source-bytes");
+  const usageUploads = element("usage-uploads");
+  const usageQueries = element("usage-queries");
+  const usageMcp = element("usage-mcp");
+  const usageProgress = element("usage-progress");
+  const activeFiles = element("active-files");
+  const usageStatus = element("usage-status");
 
   let apiKey = "";
+  let oauthEnabled = false;
+  let authGeneration = 0;
   let currentDataset = null;
   let expiryTimer = null;
 
@@ -82,6 +93,63 @@
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  };
+
+  const refreshUsage = async () => {
+    const generation = authGeneration;
+    const authorization = headers();
+    try {
+      const [usageResponse, filesResponse] = await Promise.all([
+        fetch("/v1/usage", { headers: authorization }),
+        fetch("/v1/files", { headers: authorization }),
+      ]);
+      if (generation !== authGeneration) return;
+      if (!usageResponse.ok || !filesResponse.ok) {
+        const failed = !usageResponse.ok ? usageResponse : filesResponse;
+        const message = await errorMessage(failed);
+        if (generation !== authGeneration) return;
+        setStatus(usageStatus, message, "error");
+        return;
+      }
+      const usage = await usageResponse.json();
+      const listing = await filesResponse.json();
+      if (generation !== authGeneration) return;
+      const storage = usage.storage;
+      const activity = usage.activity;
+      usageActiveFiles.textContent = String(storage.activeFiles);
+      usageSourceBytes.textContent = formatBytes(storage.sourceBytes);
+      usageUploads.textContent = String(activity.successfulUploads);
+      usageQueries.textContent = String(activity.queries);
+      usageMcp.textContent = String(activity.mcpRequests);
+      usageStorage.textContent = `${formatBytes(storage.retainedBytes)} / ${formatBytes(storage.maxRetainedBytes)}`;
+      usageProgress.max = Math.max(1, storage.maxRetainedBytes);
+      usageProgress.value = Math.max(0, storage.retainedBytes);
+      activeFiles.replaceChildren();
+      for (const file of listing.files) {
+        const item = document.createElement("li");
+        const identity = document.createElement("div");
+        const name = document.createElement("strong");
+        const id = document.createElement("code");
+        const details = document.createElement("span");
+        name.textContent = file.originalName;
+        id.textContent = file.id;
+        details.textContent = `${file.codec.toUpperCase()} · ${formatBytes(file.sourceBytes)} · expires ${new Date(file.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+        identity.append(name, id);
+        item.append(identity, details);
+        activeFiles.append(item);
+      }
+      if (listing.files.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "empty";
+        empty.textContent = "No active datasets. Upload one to begin.";
+        activeFiles.append(empty);
+      }
+      setStatus(usageStatus, activity.errors > 0 ? `${activity.errors} failed request${activity.errors === 1 ? "" : "s"} recorded.` : "Usage is scoped to this workspace.", activity.errors > 0 ? "error" : "success");
+    } catch {
+      if (generation === authGeneration) {
+        setStatus(usageStatus, "Usage could not be loaded.", "error");
+      }
+    }
   };
 
   const updateExpiry = () => {
@@ -124,6 +192,7 @@
 
   accessForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const generation = ++authGeneration;
     const candidate = apiKeyInput.value.trim();
     if (candidate.length === 0) return;
     accessSubmit.disabled = true;
@@ -132,26 +201,37 @@
       const response = await fetch("/v1/session", {
         headers: { Authorization: `Bearer ${candidate}` },
       });
+      if (generation !== authGeneration) return;
       if (!response.ok) {
-        setStatus(accessStatus, await errorMessage(response), "error");
+        const message = await errorMessage(response);
+        if (generation !== authGeneration) return;
+        setStatus(accessStatus, message, "error");
         return;
       }
+      const session = await response.json();
+      if (generation !== authGeneration) return;
+      oauthEnabled = session.oauth === true;
       apiKey = candidate;
       apiKeyInput.value = "";
       accessPanel.hidden = true;
       workspace.hidden = false;
       setStatus(accessStatus, "");
       setStatus(configStatus, "Connected for this tab only.", "success");
+      await refreshUsage();
       fileInput.focus();
     } catch {
-      setStatus(accessStatus, "Could not reach schemagrep. Try again.", "error");
+      if (generation === authGeneration) {
+        setStatus(accessStatus, "Could not reach schemagrep. Try again.", "error");
+      }
     } finally {
-      accessSubmit.disabled = false;
+      if (generation === authGeneration) accessSubmit.disabled = false;
     }
   });
 
   forgetKey.addEventListener("click", () => {
+    authGeneration += 1;
     apiKey = "";
+    oauthEnabled = false;
     resetDataset(true);
     uploadForm.reset();
     fileLabel.textContent = "Choose a file";
@@ -161,6 +241,8 @@
     setStatus(configStatus, "");
     feedbackForm.reset();
     setStatus(feedbackStatus, "");
+    activeFiles.replaceChildren();
+    usageProgress.value = 0;
     apiKeyInput.focus();
   });
 
@@ -202,6 +284,7 @@
       const record = await response.json();
       setStatus(uploadStatus, "Dataset ready.", "success");
       showDataset(record);
+      void refreshUsage();
     } catch {
       setStatus(uploadStatus, "Upload failed before the server responded. Try again.", "error");
     } finally {
@@ -215,7 +298,7 @@
         schemagrep: {
           type: "http",
           url: `${window.location.origin}/mcp`,
-          headers: { Authorization: `Bearer ${apiKey}` },
+          ...(oauthEnabled ? {} : { headers: { Authorization: `Bearer ${apiKey}` } }),
         },
       },
     };
@@ -286,6 +369,7 @@
       uploadForm.reset();
       fileLabel.textContent = "Choose a file";
       setStatus(uploadStatus, "Dataset deleted. You can upload another file.", "success");
+      await refreshUsage();
     } catch {
       setStatus(datasetStatus, "Could not delete the dataset. Try again.", "error");
     } finally {

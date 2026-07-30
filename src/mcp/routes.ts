@@ -1,5 +1,4 @@
 import type { FastifyInstance } from "fastify";
-import type { AuthInfo } from "@modelcontextprotocol/server";
 import {
   hostHeaderValidation,
   originValidation,
@@ -30,14 +29,14 @@ export async function registerMcpRoutes(
     method: ["GET", "POST", "DELETE"],
     url: "/mcp",
     handler: async (request, reply) => {
+      const auth = request.authInfo;
+      if (auth === null) {
+        await reply.code(500).send({ error: { code: "auth_context_missing", message: "MCP authentication context is missing" } });
+        return;
+      }
       reply.hijack();
       if (!validateHost(request.raw, reply.raw) || !validateOrigin(request.raw, reply.raw)) return;
 
-      const auth: AuthInfo = {
-        token: "[validated-and-redacted]",
-        clientId: request.tenantId,
-        scopes: ["schemagrep:read"],
-      };
       const nodeRequest: NodeIncomingMessageLike = {
         method: request.method,
         url: request.raw.url ?? request.url,

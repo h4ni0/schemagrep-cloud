@@ -59,6 +59,22 @@ class TenantFileService implements FileService {
     return record;
   }
 
+  async list(ownerId: string): Promise<PublicFileRecord[]> {
+    return [...this.files.values()]
+      .filter((owned) => owned.ownerId === ownerId)
+      .map((owned) => owned.record);
+  }
+
+  async usage(ownerId: string) {
+    const records = await this.list(ownerId);
+    return {
+      activeFiles: records.length,
+      sourceBytes: records.reduce((total, record) => total + record.sourceBytes, 0),
+      retainedBytes: records.reduce((total, record) => total + record.schemaBytes, 0),
+      maxRetainedBytes: 4096,
+    };
+  }
+
   async get(id: string, ownerId: string): Promise<PublicFileRecord | undefined> {
     const owned = this.files.get(id);
     return owned?.ownerId === ownerId ? owned.record : undefined;
@@ -216,6 +232,33 @@ describe("API access control", () => {
     expect(beta.statusCode).toBe(404);
     expect(beta.headers["ratelimit-remaining"]).toBe("1");
   });
+
+  test("isolates unauthenticated limits by an explicitly trusted proxy header", async () => {
+    app = buildApp({
+      config: {
+        ...CONFIG,
+        rateLimitMax: 1,
+        trustedProxyClientIpHeader: "x-real-ip",
+      },
+      fileService: new TenantFileService(),
+    });
+    const first = await app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: { "x-real-ip": "198.51.100.1" },
+    });
+    const second = await app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: { "x-real-ip": "198.51.100.2" },
+    });
+    const repeated = await app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: { "x-real-ip": "198.51.100.1" },
+    });
+    expect([first.statusCode, second.statusCode, repeated.statusCode]).toEqual([401, 401, 429]);
+  });
 });
 
 describe("API key configuration", () => {
@@ -250,4 +293,42 @@ describe("API key configuration", () => {
       }),
     ).toThrow("comma-separated hostnames");
   });
+
+  test("accepts only an explicit valid proxy client-IP header", () => {
+    expect(loadConfig({
+      AUTH_DISABLED: "true",
+      TRUSTED_PROXY_CLIENT_IP_HEADER: " CF-Connecting-IP ",
+    }).trustedProxyClientIpHeader).toBe("cf-connecting-ip");
+    expect(() => loadConfig({
+      AUTH_DISABLED: "true",
+      TRUSTED_PROXY_CLIENT_IP_HEADER: "x-forwarded-for: spoofed",
+    })).toThrow("valid HTTP header name");
+  });
+  test("requires complete and secure OAuth public configuration", () => {
+    expect(() => loadConfig({
+      AUTH_DISABLED: "true",
+      PUBLIC_BASE_URL: "https://beta.example.com",
+    })).toThrow("must be configured together");
+    expect(() => loadConfig({
+      AUTH_DISABLED: "true",
+      PUBLIC_BASE_URL: "http://beta.example.com",
+      OAUTH_COOKIE_KEY: "oauth-cookie-0123456789abcdef0123456789",
+    })).toThrow("must be HTTPS");
+    expect(() => loadConfig({
+      AUTH_DISABLED: "true",
+      PUBLIC_BASE_URL: "https://beta.example.com/nested",
+      OAUTH_COOKIE_KEY: "oauth-cookie-0123456789abcdef0123456789",
+    })).toThrow("must not contain a path");
+    expect(loadConfig({
+      AUTH_DISABLED: "true",
+      PUBLIC_BASE_URL: "https://beta.example.com/",
+      OAUTH_COOKIE_KEY: "oauth-cookie-0123456789abcdef0123456789",
+    }).publicBaseUrl).toBe("https://beta.example.com");
+    expect(loadConfig({
+      AUTH_DISABLED: "true",
+      PUBLIC_BASE_URL: "http://[::1]:3000",
+      OAUTH_COOKIE_KEY: "oauth-cookie-0123456789abcdef0123456789",
+    }).publicBaseUrl).toBe("http://[::1]:3000");
+  });
+
 });

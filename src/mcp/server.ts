@@ -96,6 +96,20 @@ const queryToolInputSchema = z.union([
   }),
 ]);
 
+const fileRecordSchema = z.strictObject({
+  id: z.string(),
+  status: z.literal("ready"),
+  codec: z.enum(["csv", "json", "jsonl", "log"]),
+  originalName: z.string(),
+  sourceBytes: z.number(),
+  schemaBytes: z.number(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+});
+const listFilesOutputSchema = z.strictObject({
+  files: z.array(fileRecordSchema),
+});
+
 const schemaToolOutputSchema = z.strictObject({
   fileId: z.string(),
   schema: z.string(),
@@ -147,7 +161,32 @@ function createTenantServer(
     { name: "schemagrep-cloud", version: "0.0.0" },
     {
       instructions:
-        "Call schemagrep_get_schema exactly once as the first action; after it succeeds, do not call it again. Use schema facts directly when conclusive; otherwise use schemagrep_query. For filter-only count or grep, target must be null. grep returns complete matching records, not a projected target field. Use argmax or argmin directly when both the extremum and its count are requested. Set limit only for grep. Never infer a total count from limited grep evidence.",
+        "Use schemagrep_list_files when the user has not provided a file ID. Once a file is selected, call schemagrep_get_schema exactly once as the first data action; after it succeeds, do not call it again. Use schema facts directly when conclusive; otherwise use schemagrep_query. For filter-only count or grep, target must be null. grep returns complete matching records, not a projected target field. Use argmax or argmin directly when both the extremum and its count are requested. Set limit only for grep. Never infer a total count from limited grep evidence.",
+    },
+  );
+
+  server.registerTool(
+    "schemagrep_list_files",
+    {
+      title: "List uploaded files",
+      description:
+        "List the authenticated tenant's active uploaded files with IDs, names, codecs, sizes, and expiration times. Use this when the user refers to a file by name or has not supplied a file ID.",
+      inputSchema: z.strictObject({}),
+      outputSchema: listFilesOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      try {
+        return successfulResult({ files: await fileService.list(tenantId) });
+      } catch (error) {
+        reportError(error instanceof Error ? error : new Error(String(error)));
+        return errorResult("internal_error", "Files could not be listed");
+      }
     },
   );
 

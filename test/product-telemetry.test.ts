@@ -61,5 +61,21 @@ describe("aggregate product telemetry", () => {
       byLatency: { lt10ms: 1, "10to49ms": 1, "50to199ms": 1, "1splus": 1 },
       queryModes: { count: 1 },
     });
+    expect(await telemetry.summarizeTenant("customer-alpha")).toEqual({
+      events: 3,
+      successfulUploads: 2,
+      queries: 0,
+      schemaReads: 0,
+      mcpRequests: 0,
+      errors: 0,
+    });
+    expect(await telemetry.summarizeTenant("customer-beta")).toEqual({
+      events: 1,
+      successfulUploads: 0,
+      queries: 1,
+      schemaReads: 0,
+      mcpRequests: 0,
+      errors: 1,
+    });
   });
 });

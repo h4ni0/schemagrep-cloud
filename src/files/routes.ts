@@ -134,6 +134,10 @@ export async function registerFileRoutes(
   app: FastifyInstance,
   options: FileRouteOptions,
 ): Promise<void> {
+  app.get("/v1/files", async (request, reply) => reply
+    .header("cache-control", "no-store")
+    .send({ files: await options.fileService.list(request.tenantId) }));
+
   app.post("/v1/files", async (request, reply) => {
     try {
       const upload = await request.file();
