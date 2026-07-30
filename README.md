@@ -63,16 +63,23 @@ schema/query tool calls to this service.
 When OAuth is enabled, authenticate once with the invite key in a browser. Access
 and refresh tokens are stored in the OS credential store (`secret-tool` on
 Linux, Keychain on macOS); the invite key is never copied into client settings.
+The normal path opens the browser automatically. `login --no-browser` instead
+prints the authorization URL for a browser on the same computer.
 
 ```bash
 bun run cloud -- login --server https://beta.example.com
 bun run cloud -- upload ./events.jsonl
 bun run cloud -- files
-bun run cloud -- schema file_...
-bun run cloud -- query file_... --mode count --key type --value push
-bun run cloud -- query file_... --mode rows
-bun run cloud -- delete file_...
+bun run cloud -- schema --latest
+bun run cloud -- query --latest --mode count --key type --value push
+bun run cloud -- query --latest --mode rows
+bun run cloud -- delete --latest
 ```
+
+Upload output includes the new file ID and ready-to-run next commands. Schema,
+query, and delete accept either an explicit `file_...` ID or `--latest`.
+Interactive output is concise by default; add `--json` to any command for stable
+structured output. Run `bun run cloud -- help query` for command-specific help.
 
 Advanced queries may use `--request '{"mode":...}'`; repeat `--where` with one
 JSON filter object per predicate. The CLI refreshes expired access tokens

@@ -121,6 +121,55 @@ function requireArgument(value: string | undefined, usage: string): string {
   return value;
 }
 
+function flag(args: string[], name: string): boolean {
+  const index = args.indexOf(name);
+  if (index === -1) return false;
+  args.splice(index, 1);
+  return true;
+}
+
+function rejectUnknownArguments(args: string[]): void {
+  if (args.length > 0) throw new Error(`Unknown arguments: ${args.join(" ")}`);
+}
+
+function commandHelp(command?: string): string {
+  if (command === "login") {
+    return [
+      "Usage: bun run cloud -- login --server URL [--no-browser] [--json]",
+      "Connect through browser OAuth. --no-browser prints the URL for manual opening.",
+    ].join("\n");
+  }
+  if (command === "files") return "Usage: bun run cloud -- files [--json]";
+  if (command === "upload") return "Usage: bun run cloud -- upload PATH [--json]";
+  if (command === "schema") return "Usage: bun run cloud -- schema <FILE_ID|--latest> [--json]";
+  if (command === "query") {
+    return [
+      "Usage: bun run cloud -- query <FILE_ID|--latest> --mode MODE [options] [--json]",
+      "Coordinates: --key NAME | --slot N | --col N",
+      "Options: --value VALUE, --where JSON, --limit N, --template N, --request JSON",
+      "Examples:",
+      "  bun run cloud -- query --latest --mode count --key type --value push",
+      "  bun run cloud -- query --latest --mode max --key status",
+    ].join("\n");
+  }
+  if (command === "delete") return "Usage: bun run cloud -- delete <FILE_ID|--latest> [--json]";
+  if (command === "logout") return "Usage: bun run cloud -- logout [--json]";
+  return [
+    "Usage: bun run cloud -- <command> [options]",
+    "",
+    "Commands:",
+    "  login    Connect through browser OAuth",
+    "  files    List active files",
+    "  upload   Upload and encode a file",
+    "  schema   Read a file schema",
+    "  query    Run a structured query",
+    "  delete   Delete an active file",
+    "  logout   Revoke and remove credentials",
+    "",
+    "Run `bun run cloud -- help COMMAND` for command-specific help.",
+  ].join("\n");
+}
+
 async function writeProfile(profile: CredentialProfile): Promise<void> {
   const path = profilePath();
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -369,7 +418,7 @@ async function receiveAuthorizationCode(expectedState: string): Promise<string> 
   });
 }
 
-async function login(serverArgument: string): Promise<void> {
+async function login(serverArgument: string, openBrowser: boolean): Promise<string> {
   const server = normalizeServer(serverArgument);
   const { metadata, resource } = await discover(server);
   const verifier = randomBytes(48).toString("base64url");
@@ -388,8 +437,13 @@ async function login(serverArgument: string): Promise<void> {
   }).toString();
 
   const codePromise = receiveAuthorizationCode(state);
-  console.error(`Opening ${authorizationUrl.origin} for authorization…`);
-  launchBrowser(authorizationUrl.href);
+  if (openBrowser) {
+    console.error(`Opening ${authorizationUrl.origin} for authorization…`);
+    launchBrowser(authorizationUrl.href);
+  } else {
+    console.error("Open this authorization URL in a browser on this computer:");
+    console.log(authorizationUrl.href);
+  }
   const code = await codePromise;
   const token = await requestJson(metadata.token_endpoint, {
     method: "POST",
@@ -432,7 +486,7 @@ async function login(serverArgument: string): Promise<void> {
       ...(refreshToken === undefined ? {} : { refreshToken }),
     });
   });
-  console.log(`Connected to ${server}`);
+  return server;
 }
 
 async function readStoredCredentials(): Promise<Credentials> {
@@ -522,54 +576,181 @@ function buildQuery(args: string[]): Record<string, unknown> {
   };
 }
 
-function print(value: unknown): void {
+function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-async function main(): Promise<void> {
-  const [command, ...args] = process.argv.slice(2);
-  if (command === undefined || command === "help" || command === "--help" || command === "-h") {
-    console.log("Usage: bun run cloud -- <login|logout|files|upload|schema|query|delete> [options]");
+function objectValue(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Server returned an invalid ${label}`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function fileRecords(value: unknown): Record<string, unknown>[] {
+  const response = objectValue(value, "file listing");
+  if (!Array.isArray(response.files)) throw new Error("Server returned an invalid file listing");
+  return response.files.map((file) => objectValue(file, "file record"));
+}
+
+function requiredString(
+  record: Record<string, unknown>,
+  name: string,
+  label: string,
+): string {
+  const value = record[name];
+  if (typeof value !== "string") throw new Error(`Server returned an invalid ${label}`);
+  return value;
+}
+
+function printFiles(response: Record<string, unknown>, json: boolean): void {
+  if (json) {
+    printJson(response);
     return;
   }
+  const files = fileRecords(response);
+  if (files.length === 0) {
+    console.log("No active files.");
+    return;
+  }
+  console.log(`Active files (${files.length}):`);
+  for (const file of files) {
+    const id = requiredString(file, "id", "file record");
+    const name = requiredString(file, "originalName", "file record");
+    const codec = requiredString(file, "codec", "file record").toUpperCase();
+    const expiresAt = requiredString(file, "expiresAt", "file record");
+    console.log(`  ${id}  ${name}  ${codec}  expires ${expiresAt}`);
+  }
+}
+
+function printUpload(response: Record<string, unknown>, json: boolean): void {
+  if (json) {
+    printJson(response);
+    return;
+  }
+  const id = requiredString(response, "id", "upload response");
+  const name = requiredString(response, "originalName", "upload response");
+  const expiresAt = requiredString(response, "expiresAt", "upload response");
+  console.log(`Uploaded ${name}`);
+  console.log(`ID: ${id}`);
+  console.log(`Expires: ${expiresAt}`);
+  console.log("");
+  console.log("Next:");
+  console.log(`  bun run cloud -- schema ${id}`);
+  console.log(`  bun run cloud -- query ${id} --mode count --key FIELD --value VALUE`);
+  console.log("  Or use --latest instead of the file ID.");
+}
+
+async function latestFileId(): Promise<string> {
+  const files = fileRecords(await authenticatedRequest("/v1/files"));
+  const latest = files[0];
+  if (latest === undefined) throw new Error("No active files. Upload a file first.");
+  return requiredString(latest, "id", "file record");
+}
+
+async function resolveFileArgument(args: string[], usage: string): Promise<string> {
+  const latest = flag(args, "--latest");
+  const explicit = args[0] !== undefined && !args[0].startsWith("--")
+    ? args.shift()
+    : undefined;
+  if (latest && explicit !== undefined) throw new Error("Use a file ID or --latest, not both");
+  if (latest) return latestFileId();
+  return requireArgument(explicit, usage);
+}
+
+async function main(): Promise<void> {
+  const rawArguments = process.argv.slice(2);
+  if (rawArguments.some((argument) => argument.trim().length === 0)) {
+    throw new Error([
+      "A blank argument was received. Your shell probably broke a multiline command.",
+      "Retry with the entire command on one line.",
+    ].join("\n"));
+  }
+  const [command, ...args] = rawArguments;
+  if (command === undefined || command === "--help" || command === "-h") {
+    console.log(commandHelp());
+    return;
+  }
+  if (command === "help") {
+    console.log(commandHelp(args[0]));
+    return;
+  }
+  if (flag(args, "--help") || flag(args, "-h")) {
+    console.log(commandHelp(command));
+    return;
+  }
+  const json = flag(args, "--json");
   if (command === "login") {
-    const server = option(args, "--server") ?? process.env.SCHEMAGREP_CLOUD_URL;
-    await login(requireArgument(server, "login --server https://your-server"));
+    const noBrowser = flag(args, "--no-browser");
+    const serverArgument = option(args, "--server") ?? process.env.SCHEMAGREP_CLOUD_URL;
+    rejectUnknownArguments(args);
+    const server = await login(
+      requireArgument(serverArgument, "login --server https://your-server"),
+      !noBrowser,
+    );
+    if (json) {
+      printJson({ connected: true, server, mcp: `${server}/mcp` });
+    } else {
+      console.log(`Connected to ${server}`);
+      console.log("");
+      console.log("Next:");
+      console.log("  bun run cloud -- upload ./data.jsonl");
+      console.log("  bun run cloud -- files");
+      console.log(`MCP: ${server}/mcp`);
+    }
   } else if (command === "logout") {
+    rejectUnknownArguments(args);
     await withCredentialLock(async () => {
       await revokeAndDeleteCredentials(await readProfile());
       await rm(profilePath(), { force: true });
     });
-    console.log("Logged out");
+    if (json) printJson({ loggedOut: true });
+    else console.log("Logged out");
   } else if (command === "files") {
-    print(await authenticatedRequest("/v1/files"));
+    rejectUnknownArguments(args);
+    printFiles(await authenticatedRequest("/v1/files"), json);
   } else if (command === "upload") {
     const path = requireArgument(args.shift(), "upload PATH");
+    rejectUnknownArguments(args);
     const form = new FormData();
     form.append("file", await openAsBlob(path), basename(path));
-    print(await authenticatedRequest("/v1/files", { method: "POST", body: form }));
+    const response = await authenticatedRequest("/v1/files", { method: "POST", body: form });
+    printUpload(response, json);
   } else if (command === "schema") {
-    const fileId = requireArgument(args.shift(), "schema FILE_ID");
+    const fileId = await resolveFileArgument(args, "schema <FILE_ID|--latest>");
+    rejectUnknownArguments(args);
     const credentials = await loadCredentials();
     const response = await fetch(`${credentials.server}/v1/files/${encodeURIComponent(fileId)}/schema`, {
       headers: { authorization: `Bearer ${credentials.accessToken}` },
     });
     if (!response.ok) throw new Error(await response.text());
-    process.stdout.write(await response.text());
+    const schema = await response.text();
+    if (json) printJson({ fileId, schema });
+    else process.stdout.write(schema);
   } else if (command === "query") {
-    const fileId = requireArgument(args.shift(), "query FILE_ID --mode MODE [options]");
+    const fileId = await resolveFileArgument(args, "query <FILE_ID|--latest> --mode MODE [options]");
     const request = buildQuery(args);
-    if (args.length > 0) throw new Error(`Unknown arguments: ${args.join(" ")}`);
-    print(await authenticatedRequest(`/v1/files/${encodeURIComponent(fileId)}/query`, {
+    rejectUnknownArguments(args);
+    const response = await authenticatedRequest(`/v1/files/${encodeURIComponent(fileId)}/query`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(request),
-    }));
+    });
+    if (json) {
+      printJson(response);
+    } else {
+      const answer = response.answer;
+      if (typeof answer !== "string") throw new Error("Server returned an invalid query response");
+      console.log(`Answer: ${answer}`);
+    }
   } else if (command === "delete") {
-    const fileId = requireArgument(args.shift(), "delete FILE_ID");
-    print(await authenticatedRequest(`/v1/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }));
+    const fileId = await resolveFileArgument(args, "delete <FILE_ID|--latest>");
+    rejectUnknownArguments(args);
+    await authenticatedRequest(`/v1/files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+    if (json) printJson({ deleted: true, fileId });
+    else console.log(`Deleted ${fileId}`);
   } else {
-    console.error("Usage: bun run cloud -- <login|logout|files|upload|schema|query|delete> [options]");
+    console.error(commandHelp());
     process.exitCode = 2;
   }
 }
