@@ -5,10 +5,15 @@ import { FILE_ID_PATTERN } from "../files/id";
 import type { FileService } from "../files/types";
 import { QUERY_MODES, parseStructuredQueryRequest } from "../query/contract";
 
+const jsonLeafKeySchema = z.string()
+  .min(1)
+  .max(256)
+  .describe("JSON/JSONL leaf key name, not a dotted path or JSONPath; use size for payload.size.");
+
 const queryFieldSchema = z.union([
   z.strictObject({ col: z.number().int().min(0).max(1_000_000) }),
   z.strictObject({ slot: z.number().int().min(1).max(1_000_000) }),
-  z.strictObject({ key: z.string().min(1).max(256) }),
+  z.strictObject({ key: jsonLeafKeySchema }),
 ]);
 
 const exactValueSchema = z.union([
@@ -161,7 +166,7 @@ function createTenantServer(
     { name: "schemagrep-cloud", version: "0.0.0" },
     {
       instructions:
-        "Use schemagrep_list_files when the user has not provided a file ID. Once a file is selected, call schemagrep_get_schema exactly once as the first data action; after it succeeds, do not call it again. Use schema facts directly when conclusive; otherwise use schemagrep_query. For filter-only count or grep, target must be null. grep returns complete matching records, not a projected target field. Use argmax or argmin directly when both the extremum and its count are requested. Set limit only for grep. Never infer a total count from limited grep evidence.",
+        "Use schemagrep_list_files when the user has not provided a file ID. Once a file is selected, call schemagrep_get_schema exactly once as the first data action; after it succeeds, do not call it again. JSON/JSONL key coordinates are leaf key names, not dotted paths or JSONPath: address payload.size as { key: \"size\" }. Use schema facts directly when conclusive; otherwise use schemagrep_query. For filter-only count or grep, target must be null. grep returns complete matching records, not a projected target field. Use argmax or argmin directly when both the extremum and its count are requested. Set limit only for grep. Never infer a total count from limited grep evidence.",
     },
   );
 
@@ -224,7 +229,7 @@ function createTenantServer(
     {
       title: "Query an uploaded file",
       description:
-        "Run one deterministic query. Modes: rows returns the total; count/grep accept either target+value, or target=null with one or more filters. For filter-only count/grep, target MUST be null; grep returns complete matching records and does not use target for projection. min/max/distinct/const use a target and no filters. sum/avg/argmax/argmin use a target and may use ANDed filters; argmax/argmin return the extremum and its count in one call. CSV fields use col, logs use slot, and JSON/JSONL use key or slot. limit is legal only for grep.",
+        "Run one deterministic query. Modes: rows returns the total; count/grep accept either target+value, or target=null with one or more filters. For filter-only count/grep, target MUST be null; grep returns complete matching records and does not use target for projection. min/max/distinct/const use a target and no filters. sum/avg/argmax/argmin use a target and may use ANDed filters; argmax/argmin return the extremum and its count in one call. CSV fields use col, logs use slot, and JSON/JSONL use a leaf key name or slot. Dotted paths and JSONPath are unsupported: use key size, not payload.size. limit is legal only for grep.",
       inputSchema: queryToolInputSchema,
       outputSchema: queryToolOutputSchema,
       annotations: {

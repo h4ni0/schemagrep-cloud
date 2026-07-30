@@ -171,6 +171,9 @@ describe("schemagrep MCP endpoint", () => {
     expect(tools.tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
     expect(tools.tools.find((tool) => tool.name === "schemagrep_get_schema")?.description).toContain("exactly once");
     expect(tools.tools.find((tool) => tool.name === "schemagrep_query")?.description).toContain("target MUST be null");
+    expect(tools.tools.find((tool) => tool.name === "schemagrep_query")?.description).toContain(
+      "use key size, not payload.size",
+    );
     expect(listing.structuredContent).toEqual({ files: [RECORD] });
     expect(schema.structuredContent).toEqual({ fileId: FILE_ID, schema: "[schema]\n" });
     expect(count.structuredContent).toEqual({
